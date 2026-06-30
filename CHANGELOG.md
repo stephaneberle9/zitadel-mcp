@@ -27,3 +27,11 @@ Entries below cover changes made on top of upstream `v1.0.2` (commit `e3bd79c`).
   to `JWT`). Cherry-picked from
   [luuthanhminh/zitadel-mcp@74ff2e0](https://github.com/luuthanhminh/zitadel-mcp/commit/74ff2e0)
   (authorship preserved).
+
+### Security
+
+- Validate `update_app` redirect / post-logout URIs as URLs (`z.string().url()`), matching
+  `create_oidc_app`; widen debug-log redaction to cover `roleKey` / `roleKeys`,
+  `accessTokenType`, and `expirationDate`. Ported (manually, minus the dependency churn)
+  from [STIFLEUR390/zitadel-mcp@023bf90](https://github.com/STIFLEUR390/zitadel-mcp/commit/023bf90)
+  ("Phase 7: Input validation & redaction hardening").
