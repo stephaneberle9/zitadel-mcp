@@ -42,7 +42,7 @@ async function main() {
   const handlers = getHandlers(config);
 
   const server = new Server(
-    { name: 'zitadel-mcp-server', version: '1.2.0' },
+    { name: 'zitadel-mcp-server', version: '1.3.0' },
     { capabilities: { tools: {} } }
   );
 

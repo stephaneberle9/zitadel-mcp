@@ -23,6 +23,12 @@ Entries below cover changes made on top of upstream `v1.0.2` (commit `e3bd79c`).
     provider is an INSTANCE-level resource, so ZITADEL requires `iam.read` / `iam.write` — the
     service account needs an IAM-level manager grant (`ORG_OWNER` alone returns 403). New
     `notifications` tool domain; SMTP secrets/PII added to debug-log redaction.
+  - **Leak-safe credentials:** `zitadel_set_smtp_config` reads the relay creds
+    (`SMTP_HOST/PORT/USER/PASSWORD/FROM`) from a gitignored file via a non-secret `credsProfile`
+    arg — `~/.secrets/smtp/.env.<profile>` (default `~/.secrets/smtp/.env`, base overridable
+    with `SMTP_ENV_PATH`) — so the password never enters the conversation. Any field can still be
+    passed as an argument (which overrides the file), but passing `password` that way puts it in
+    the transcript. `SMTP_FROM` ("Name &lt;addr&gt;") is split into ZITADEL's sender name/address.
 - **Login-policy tools (org-scoped, ORG_OWNER):**
   - `zitadel_get_login_policy` — report the current org's login policy: whether
     self-registration (`allowRegister`) is on, and whether the policy is a custom org
