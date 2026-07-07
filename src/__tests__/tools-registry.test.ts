@@ -11,6 +11,7 @@ import { SERVICE_ACCOUNT_TOOLS, SERVICE_ACCOUNT_HANDLERS } from '../tools/servic
 import { ORG_TOOLS, ORG_HANDLERS } from '../tools/organizations.js';
 import { ORG_MEMBER_TOOLS, ORG_MEMBER_HANDLERS } from '../tools/org-members.js';
 import { PROVISIONING_TOOLS, PROVISIONING_HANDLERS } from '../tools/provisioning.js';
+import { SMTP_TOOLS, SMTP_HANDLERS } from '../tools/smtp.js';
 import { UTILITY_TOOLS, UTILITY_HANDLERS } from '../tools/utility.js';
 import { PORTAL_TOOLS, PORTAL_HANDLERS } from '../tools/portal.js';
 import {
@@ -33,6 +34,7 @@ const ALL_MODULES = [
   { name: 'organizations', tools: ORG_TOOLS, handlers: ORG_HANDLERS },
   { name: 'org-members', tools: ORG_MEMBER_TOOLS, handlers: ORG_MEMBER_HANDLERS },
   { name: 'provisioning', tools: PROVISIONING_TOOLS, handlers: PROVISIONING_HANDLERS },
+  { name: 'smtp', tools: SMTP_TOOLS, handlers: SMTP_HANDLERS },
   { name: 'utility', tools: UTILITY_TOOLS, handlers: UTILITY_HANDLERS },
   { name: 'portal', tools: PORTAL_TOOLS, handlers: PORTAL_HANDLERS },
   { name: 'login-policy', tools: LOGIN_POLICY_TOOLS, handlers: LOGIN_POLICY_HANDLERS },
@@ -41,13 +43,13 @@ const ALL_MODULES = [
 ];
 
 describe('tool registry', () => {
-  it('has 37 total tools', () => {
+  it('has 40 total tools', () => {
     // 8 user + 3 project + 4 application + 5 role + 3 service-account + 1 org
     // + 4 org-member + 2 provisioning + 1 utility + 2 portal
-    // + 1 login-policy (read) + 1 login-policy (write, gated) + 2 login-texts = 37
+    // + 1 login-policy (read) + 1 login-policy (write, gated) + 2 login-texts + 3 smtp = 40
     // (zitadel_list_orgs removed in REM-22 — uses Admin API, violates least-privilege)
     const total = ALL_MODULES.reduce((sum, m) => sum + m.tools.length, 0);
-    expect(total).toBe(37);
+    expect(total).toBe(40);
   });
 
   it('has no duplicate tool names', () => {

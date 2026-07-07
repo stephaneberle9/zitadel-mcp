@@ -4,8 +4,10 @@
  *
  * Note: zitadel_list_orgs was removed — it used the Admin API (/admin/v1/orgs/_search)
  * which requires IAM-level admin permissions. This violates least-privilege; the MCP
- * server should only use org-scoped Management API endpoints. Use the Zitadel Console
- * for cross-org administration.
+ * server should stay on org-scoped Management API endpoints for org administration. Use
+ * the Zitadel Console for cross-org administration. (The SMTP tools in src/tools/smtp.ts
+ * are a deliberate, documented exception that does use the Admin API for the instance-level
+ * notification provider.)
  */
 
 import type { ToolDefinition, ToolHandler } from '../types/tools.js';
