@@ -12,7 +12,12 @@ import { ROLE_HANDLERS } from '../tools/roles.js';
 import { SERVICE_ACCOUNT_HANDLERS } from '../tools/service-accounts.js';
 import { ORG_HANDLERS } from '../tools/organizations.js';
 import { SMTP_HANDLERS } from '../tools/smtp.js';
+import { loadSmtpCreds } from '../utils/smtp-creds.js';
 import { UTILITY_HANDLERS } from '../tools/utility.js';
+
+// SMTP creds are read from a gitignored file at tool-call time — mock it so tests never
+// touch ~/.secrets and stay deterministic. Default: empty (args supply everything).
+vi.mock('../utils/smtp-creds.js', () => ({ loadSmtpCreds: vi.fn(() => ({})) }));
 
 // ─── Mock setup ───────────────────────────────────────────────────────────────
 
@@ -534,6 +539,8 @@ describe('smtp handlers', () => {
 
   beforeEach(() => {
     ctx = createMockContext();
+    (loadSmtpCreds as any).mockReset();
+    (loadSmtpCreds as any).mockReturnValue({}); // default: no file creds; args supply everything
   });
 
   describe('zitadel_get_smtp_config', () => {
@@ -630,6 +637,63 @@ describe('smtp handlers', () => {
 
       // only _search + POST — no _activate call
       expect((ctx.client.request as any).mock.calls.length).toBe(2);
+    });
+
+    it('sources creds from the profile file when no secret args are passed', async () => {
+      (loadSmtpCreds as any).mockReturnValue({
+        host: 'smtp-relay.brevo.com',
+        port: '587',
+        user: 'brevo-login',
+        password: 'file-secret-key',
+        from: 'itemis Solutions <no-reply@itemis.com>',
+      });
+      (ctx.client.request as any)
+        .mockResolvedValueOnce({ result: [] })
+        .mockResolvedValueOnce({ id: 'new-3' })
+        .mockResolvedValueOnce({});
+
+      // Only a non-secret profile name — no host/user/password/sender args.
+      const result = await SMTP_HANDLERS['zitadel_set_smtp_config']!({ credsProfile: 'accelerator' }, ctx);
+
+      expect((loadSmtpCreds as any)).toHaveBeenCalledWith('accelerator', undefined);
+      const addBody = JSON.parse((ctx.client.request as any).mock.calls[1][1].body);
+      expect(addBody.host).toBe('smtp-relay.brevo.com:587');
+      expect(addBody.user).toBe('brevo-login');
+      expect(addBody.plain).toEqual({ password: 'file-secret-key' });
+      // SMTP_FROM split into name + address
+      expect(addBody.senderName).toBe('itemis Solutions');
+      expect(addBody.senderAddress).toBe('no-reply@itemis.com');
+      expect(result.content[0]!.text).not.toContain('file-secret-key');
+    });
+
+    it('an explicit arg overrides the file value', async () => {
+      (loadSmtpCreds as any).mockReturnValue({
+        host: 'smtp-relay.brevo.com', port: '587', user: 'brevo-login',
+        password: 'file-secret-key', from: 'Old <old@ex.com>',
+      });
+      (ctx.client.request as any)
+        .mockResolvedValueOnce({ result: [] })
+        .mockResolvedValueOnce({ id: 'new-4' })
+        .mockResolvedValueOnce({});
+
+      await SMTP_HANDLERS['zitadel_set_smtp_config']!(
+        { credsProfile: 'accelerator', senderAddress: 'override@ex.com', senderName: 'Override' },
+        ctx
+      );
+
+      const addBody = JSON.parse((ctx.client.request as any).mock.calls[1][1].body);
+      expect(addBody.senderAddress).toBe('override@ex.com');
+      expect(addBody.senderName).toBe('Override');
+      expect(addBody.plain).toEqual({ password: 'file-secret-key' }); // password still from file
+    });
+
+    it('errors listing what is missing when neither file nor args supply it', async () => {
+      (loadSmtpCreds as any).mockReturnValue({}); // empty file
+      await expect(
+        SMTP_HANDLERS['zitadel_set_smtp_config']!({ host: 'smtp-relay.brevo.com' }, ctx)
+      ).rejects.toThrow(/Missing SMTP settings/);
+      // threw before any ZITADEL call
+      expect((ctx.client.request as any).mock.calls.length).toBe(0);
     });
   });
 
