@@ -10,6 +10,19 @@ Entries below cover changes made on top of upstream `v1.0.2` (commit `e3bd79c`).
 
 ### Added
 
+- **SMTP / email-provider tools (Admin API, IAM-level):**
+  - `zitadel_get_smtp_config` — list the instance SMTP notification providers (which one is
+    active, its host and sender); secrets are never returned.
+  - `zitadel_set_smtp_config` — configure the instance SMTP provider (e.g. switch ZITADEL
+    from its built-in dev server to Brevo) and activate it. Idempotent: reuses a matching
+    provider (by description, host or sender) via `PUT`, otherwise creates one via `POST`.
+    Uses the `SMTPPlainAuth` oneof (`plain: { password }`) and puts the port inside `host`.
+  - `zitadel_activate_smtp_config` — activate an existing provider by id.
+  - These target the modern `/admin/v1/email/*` endpoints (the `/admin/v1/smtp` family is
+    deprecated). **Deliberate exception to the Management-API-only design:** the notification
+    provider is an INSTANCE-level resource, so ZITADEL requires `iam.read` / `iam.write` — the
+    service account needs an IAM-level manager grant (`ORG_OWNER` alone returns 403). New
+    `notifications` tool domain; SMTP secrets/PII added to debug-log redaction.
 - **Login-policy tools (org-scoped, ORG_OWNER):**
   - `zitadel_get_login_policy` — report the current org's login policy: whether
     self-registration (`allowRegister`) is on, and whether the policy is a custom org
