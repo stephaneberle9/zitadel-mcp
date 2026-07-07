@@ -19,6 +19,7 @@ import { z } from 'zod';
 import type { ToolDefinition, ToolHandler } from '../types/tools.js';
 import { textResponse, zitadelId } from '../types/tools.js';
 import { logger } from '../utils/logger.js';
+import { loadSmtpCreds } from '../utils/smtp-creds.js';
 
 // ─── Endpoints ───────────────────────────────────────────────────────────────
 
@@ -78,22 +79,26 @@ export const SMTP_TOOLS: ToolDefinition[] = [
       '(same description, host or sender) it is UPDATED, otherwise a new one is created. By ' +
       'default the provider is then ACTIVATED so users receive mail through it. INSTANCE-level ' +
       '(Admin API) — affects every org on the instance and needs an IAM-level write grant ' +
-      '(ORG_OWNER alone yields 403).',
+      '(ORG_OWNER alone yields 403).\n\n' +
+      'CREDENTIALS: prefer `credsProfile` — the relay creds (SMTP_HOST/PORT/USER/PASSWORD/FROM) ' +
+      'are read from a gitignored file (~/.secrets/smtp/.env.<profile>) so the password never ' +
+      'enters the conversation. Any field passed as an argument overrides the file; passing ' +
+      '`password` as an argument DOES put it in the transcript — use `credsProfile` instead.',
     inputSchema: {
       type: 'object',
       properties: {
-        host: { type: 'string', description: 'SMTP host, e.g. "smtp-relay.brevo.com". Port is added from "port" unless already included as host:port.' },
-        port: { type: 'number', description: 'SMTP port (default 587). Ignored if "host" already contains ":port".' },
-        senderAddress: { type: 'string', description: 'From address, e.g. "no-reply@example.com" (must be a verified sender at the relay).' },
-        senderName: { type: 'string', description: 'From display name, e.g. "itemis Solutions".' },
-        user: { type: 'string', description: 'SMTP login / username at the relay.' },
-        password: { type: 'string', description: 'SMTP password / API key at the relay. Never logged or returned.' },
+        credsProfile: { type: 'string', description: 'Non-secret profile name selecting ~/.secrets/smtp/.env.<profile> (omit for ~/.secrets/smtp/.env). The relay creds are read from that file — preferred over passing them as args.' },
+        host: { type: 'string', description: 'SMTP host, e.g. "smtp-relay.brevo.com". Overrides SMTP_HOST from the creds file. Port is added from "port" unless already included as host:port.' },
+        port: { type: 'number', description: 'SMTP port (default 587). Overrides SMTP_PORT. Ignored if host already contains ":port".' },
+        senderAddress: { type: 'string', description: 'From address (verified sender at the relay). Overrides the address parsed from SMTP_FROM.' },
+        senderName: { type: 'string', description: 'From display name. Overrides the name parsed from SMTP_FROM.' },
+        user: { type: 'string', description: 'SMTP login. Overrides SMTP_USER.' },
+        password: { type: 'string', description: 'SMTP password / API key. Overrides SMTP_PASSWORD — but NOTE this puts the secret in the transcript; prefer credsProfile. Never logged or returned.' },
         tls: { type: 'boolean', description: 'Use TLS/STARTTLS (default true; true for Brevo on 587).' },
         replyToAddress: { type: 'string', description: 'Optional Reply-To address.' },
         description: { type: 'string', description: 'Human label for the provider (default "Configured via zitadel-mcp"). Also the idempotency match key.' },
         activate: { type: 'boolean', description: 'Activate the provider after saving (default true).' },
       },
-      required: ['host', 'senderAddress', 'senderName', 'user', 'password'],
     },
     _meta: { readOnly: false, domain: 'notifications' },
     annotations: { title: 'Set SMTP Config', readOnlyHint: false, destructiveHint: false, idempotentHint: true },
@@ -158,12 +163,13 @@ const getSmtpConfigHandler: ToolHandler = async (_params, ctx) => {
 const setSmtpConfigHandler: ToolHandler = async (params, ctx) => {
   const input = z
     .object({
-      host: z.string().min(1).max(500),
+      credsProfile: z.string().max(100).optional(),
+      host: z.string().min(1).max(500).optional(),
       port: z.number().int().min(1).max(65535).optional(),
-      senderAddress: z.string().min(1).max(200),
-      senderName: z.string().min(1).max(200),
-      user: z.string().min(1).max(200),
-      password: z.string().min(1).max(200),
+      senderAddress: z.string().min(1).max(200).optional(),
+      senderName: z.string().min(1).max(200).optional(),
+      user: z.string().min(1).max(200).optional(),
+      password: z.string().min(1).max(200).optional(),
       tls: z.boolean().default(true),
       replyToAddress: z.string().max(200).optional(),
       description: z.string().min(1).max(200).default('Configured via zitadel-mcp'),
@@ -171,8 +177,50 @@ const setSmtpConfigHandler: ToolHandler = async (params, ctx) => {
     })
     .parse(params);
 
+  // Read relay creds from the gitignored file (keeps the password out of the transcript);
+  // any explicit arg overrides the file value.
+  const file = loadSmtpCreds(input.credsProfile, process.env['SMTP_ENV_PATH']);
+
+  // SMTP_FROM is a combined "Name <addr>"; split it for ZITADEL's separate name/address fields.
+  let senderAddress = input.senderAddress;
+  let senderName = input.senderName;
+  if ((!senderAddress || !senderName) && file.from) {
+    const m = file.from.match(/^\s*(.*?)\s*<([^>]+)>\s*$/);
+    if (m) {
+      senderName = senderName ?? (m[1] || undefined);
+      senderAddress = senderAddress ?? m[2];
+    } else {
+      senderAddress = senderAddress ?? file.from.trim();
+    }
+  }
+
+  const host = input.host ?? file.host;
+  const port = input.port ?? (file.port ? Number(file.port) : undefined);
+  const user = input.user ?? file.user;
+  const password = input.password ?? file.password;
+
+  const missing: string[] = [];
+  if (!host) missing.push('host (SMTP_HOST)');
+  if (!senderAddress) missing.push('senderAddress (from SMTP_FROM)');
+  if (!senderName) missing.push('senderName (from SMTP_FROM)');
+  if (!user) missing.push('user (SMTP_USER)');
+  if (!password) missing.push('password (SMTP_PASSWORD)');
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing SMTP settings: ${missing.join(', ')}. Put them in ~/.secrets/smtp/.env` +
+        `${input.credsProfile ? `.${input.credsProfile}` : ''} (SMTP_* keys) or pass as arguments.`
+    );
+  }
+
+  // All five are guaranteed present by the guard above — narrow for TypeScript.
+  const smtpHost = host as string;
+  const smtpUser = user as string;
+  const smtpPassword = password as string;
+  const smtpSenderAddress = senderAddress as string;
+  const smtpSenderName = senderName as string;
+
   // ZITADEL requires the port inside the host field ("host:port").
-  const hostAndPort = input.host.includes(':') ? input.host : `${input.host}:${input.port ?? 587}`;
+  const hostAndPort = smtpHost.includes(':') ? smtpHost : `${smtpHost}:${port ?? 587}`;
 
   // Idempotency: reuse an existing SMTP provider that matches on description, host or sender.
   const providers = await listSmtpProviders(ctx);
@@ -180,19 +228,19 @@ const setSmtpConfigHandler: ToolHandler = async (params, ctx) => {
     (p) =>
       p.description === input.description ||
       p.smtp?.host === hostAndPort ||
-      p.smtp?.senderAddress === input.senderAddress
+      p.smtp?.senderAddress === smtpSenderAddress
   );
 
   // SMTPPlainAuth oneof — the top-level `password` field is deprecated.
   const configBody = {
-    senderAddress: input.senderAddress,
-    senderName: input.senderName,
+    senderAddress: smtpSenderAddress,
+    senderName: smtpSenderName,
     tls: input.tls,
     host: hostAndPort,
-    user: input.user,
+    user: smtpUser,
     replyToAddress: input.replyToAddress ?? '',
     description: input.description,
-    plain: { password: input.password },
+    plain: { password: smtpPassword },
   };
 
   let id: string;
@@ -227,7 +275,7 @@ const setSmtpConfigHandler: ToolHandler = async (params, ctx) => {
 
   return textResponse(
     `${created ? 'Created' : 'Updated'} SMTP provider "${input.description}" (id ${id}).\n` +
-    `Endpoint: ${hostAndPort} (tls: ${input.tls ? 'yes' : 'no'}), sender: ${input.senderName} <${input.senderAddress}>.\n` +
+    `Endpoint: ${hostAndPort} (tls: ${input.tls ? 'yes' : 'no'}), sender: ${smtpSenderName} <${smtpSenderAddress}>.\n` +
     `${activated ? 'Activated — ZITADEL now sends notification e-mails through it.' : 'Not activated (activate=false) — call zitadel_activate_smtp_config to switch to it.'}\n\n` +
     `Impact: INSTANCE-level change — affects every org on this ZITADEL instance.`
   );
