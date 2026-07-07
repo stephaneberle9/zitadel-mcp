@@ -41,6 +41,9 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for [
 | **Organizations** | `zitadel_get_org` | Get current org details |
 | **Login Policy** | `zitadel_get_login_policy` | Get the org login policy (self-registration on/off, custom vs. inherited) |
 | | `zitadel_set_self_registration` | Enable/disable self-registration (`allowRegister`) for the org — idempotent |
+| **SMTP** *(Admin API, IAM-level)* | `zitadel_get_smtp_config` | List instance SMTP notification providers (active one, host, sender) — secrets never returned |
+| | `zitadel_set_smtp_config` | Configure the instance SMTP provider (e.g. Brevo) and activate it — idempotent |
+| | `zitadel_activate_smtp_config` | Activate an existing SMTP provider by id |
 | **Utility** | `zitadel_get_auth_config` | Get .env.local template for an app |
 | **Portal** | `portal_register_app` | Register app in portal DB |
 | | `portal_setup_full_app` | One-click: Zitadel + portal setup |
@@ -124,6 +127,7 @@ Restart Claude Code after adding the config. The Zitadel tools will appear autom
 **This server has admin-level access to your Zitadel instance.** Understand what that means before using it:
 
 - The service account needs org-level management rights. Empirically (Zitadel Cloud, verified 2026-06): `ORG_USER_MANAGER` is enough to **create users and assign existing project roles**, but **`ORG_OWNER` is required** to create project roles, manage org-manager grants (the no-super-admin pattern), and manage applications. For the full provisioning workload, give the service account `ORG_OWNER`; human Admins can stay at `ORG_USER_MANAGER`. Keep the key in a gitignored `.env` (not a shared dotfile) and use `ZITADEL_READ_ONLY=true` for non-mutating sessions.
+- **SMTP tools are the one deliberate exception to the Management-API-only design.** `zitadel_get_smtp_config` / `zitadel_set_smtp_config` / `zitadel_activate_smtp_config` use the **Admin API** (`/admin/v1/email/*`) because the notification SMTP provider is an **instance-level** resource shared by every org. ZITADEL gates it behind `iam.read` / `iam.write`, so the service account needs an **IAM-level manager** grant (e.g. `IAM_OWNER`) — `ORG_OWNER` alone returns `403`. Only grant this if you actually use the SMTP tools. The SMTP password is passed as a tool argument (redacted from logs) and is never returned by the read tool.
 - When you create an OIDC app (`zitadel_create_oidc_app`), the **client secret** is returned in the tool response. It is only available at creation time. The AI assistant (and its conversation history) will see it — save it immediately and treat it as sensitive.
 - When you generate a service account key (`zitadel_create_service_user_key`), the **full private key** is returned in the tool response. Same caveat: save it, and be aware it's visible in your MCP client's conversation.
 - All tool arguments containing PII (email, name, URLs) are **redacted from debug logs**. IDs and tool names are still logged.

@@ -11,6 +11,7 @@ import { APPLICATION_HANDLERS } from '../tools/applications.js';
 import { ROLE_HANDLERS } from '../tools/roles.js';
 import { SERVICE_ACCOUNT_HANDLERS } from '../tools/service-accounts.js';
 import { ORG_HANDLERS } from '../tools/organizations.js';
+import { SMTP_HANDLERS } from '../tools/smtp.js';
 import { UTILITY_HANDLERS } from '../tools/utility.js';
 
 // ─── Mock setup ───────────────────────────────────────────────────────────────
@@ -457,7 +458,8 @@ describe('service account handlers', () => {
       expect(result.content[0]!.text).toContain('key-new');
       // Key is saved to file, not shown in response (REM-01)
       expect(result.content[0]!.text).toContain('Private key saved to');
-      expect(result.content[0]!.text).toContain('.zitadel-mcp/keys/');
+      // Normalize separators — path.join yields backslashes on Windows, forward slashes on POSIX
+      expect(result.content[0]!.text.replace(/\\/g, '/')).toContain('.zitadel-mcp/keys/');
     });
   });
 });
@@ -521,6 +523,125 @@ describe('utility handlers', () => {
       expect(text).toContain('AUTH_ZITADEL_ISSUER=https://test.zitadel.cloud');
       expect(text).toContain('AUTH_ZITADEL_CLIENT_ID=client-abc');
       expect(text).toContain('ZITADEL_PROJECT_ID=p1');
+    });
+  });
+});
+
+// ─── SMTP handlers ──────────────────────────────────────────────────────────
+
+describe('smtp handlers', () => {
+  let ctx: HandlerContext;
+
+  beforeEach(() => {
+    ctx = createMockContext();
+  });
+
+  describe('zitadel_get_smtp_config', () => {
+    it('reports "no provider" when none configured', async () => {
+      (ctx.client.request as any).mockResolvedValue({ result: [] });
+
+      const result = await SMTP_HANDLERS['zitadel_get_smtp_config']!({}, ctx);
+
+      expect(result.isError).toBeFalsy();
+      expect(result.content[0]!.text).toContain('No SMTP notification provider');
+      // reads via POST /admin/v1/email/_search
+      const [path, options] = (ctx.client.request as any).mock.calls[0];
+      expect(path).toBe('/admin/v1/email/_search');
+      expect(options.method).toBe('POST');
+    });
+
+    it('lists SMTP providers, marks the active one, and never returns the password', async () => {
+      (ctx.client.request as any).mockResolvedValue({
+        result: [
+          { id: 'p1', state: 'EMAIL_PROVIDER_ACTIVE', description: 'Brevo', smtp: { host: 'smtp-relay.brevo.com:587', senderAddress: 'no-reply@ex.com', senderName: 'Ex', tls: true } },
+          { id: 'p2', state: 'EMAIL_PROVIDER_INACTIVE', description: 'old', smtp: { host: 'smtp.old:587' } },
+          { id: 'h1', state: 'EMAIL_PROVIDER_INACTIVE', description: 'webhook', http: { endpoint: 'https://x' } },
+        ],
+      });
+
+      const result = await SMTP_HANDLERS['zitadel_get_smtp_config']!({}, ctx);
+      const text = result.content[0]!.text;
+
+      expect(text).toContain('smtp-relay.brevo.com:587');
+      expect(text).toContain('[ACTIVE]');
+      // HTTP webhook provider filtered out; only the 2 SMTP providers counted
+      expect(text).toContain('(2, 1 active)');
+      expect(text).not.toContain('webhook');
+    });
+  });
+
+  describe('zitadel_set_smtp_config', () => {
+    const brevo = {
+      host: 'smtp-relay.brevo.com',
+      port: 587,
+      senderAddress: 'no-reply@ex.com',
+      senderName: 'itemis',
+      user: 'brevo-login',
+      password: 'super-secret-key',
+      description: 'Brevo',
+    };
+
+    it('creates a new provider (POST), puts the port inside host, uses plain auth, then activates', async () => {
+      (ctx.client.request as any)
+        .mockResolvedValueOnce({ result: [] })       // _search → none
+        .mockResolvedValueOnce({ id: 'new-1' })      // POST /email/smtp → id
+        .mockResolvedValueOnce({});                  // POST /email/new-1/_activate
+
+      const result = await SMTP_HANDLERS['zitadel_set_smtp_config']!(brevo, ctx);
+
+      const [addPath, addOpts] = (ctx.client.request as any).mock.calls[1];
+      expect(addPath).toBe('/admin/v1/email/smtp');
+      expect(addOpts.method).toBe('POST');
+      const addBody = JSON.parse(addOpts.body);
+      expect(addBody.host).toBe('smtp-relay.brevo.com:587');
+      expect(addBody.plain).toEqual({ password: 'super-secret-key' });
+      expect(addBody.password).toBeUndefined(); // deprecated top-level field not used
+
+      const [actPath, actOpts] = (ctx.client.request as any).mock.calls[2];
+      expect(actPath).toBe('/admin/v1/email/new-1/_activate');
+      expect(actOpts.method).toBe('POST');
+
+      const text = result.content[0]!.text;
+      expect(text).toContain('Created');
+      expect(text).toContain('Activated');
+      expect(text).not.toContain('super-secret-key'); // password never surfaced
+    });
+
+    it('updates an existing provider matched by description (PUT to its id)', async () => {
+      (ctx.client.request as any)
+        .mockResolvedValueOnce({ result: [{ id: 'existing-9', description: 'Brevo', smtp: { host: 'smtp-relay.brevo.com:587' } }] })
+        .mockResolvedValueOnce({})  // PUT
+        .mockResolvedValueOnce({}); // activate
+
+      await SMTP_HANDLERS['zitadel_set_smtp_config']!(brevo, ctx);
+
+      const [putPath, putOpts] = (ctx.client.request as any).mock.calls[1];
+      expect(putPath).toBe('/admin/v1/email/smtp/existing-9');
+      expect(putOpts.method).toBe('PUT');
+      expect(JSON.parse(putOpts.body).id).toBe('existing-9');
+    });
+
+    it('skips activation when activate=false', async () => {
+      (ctx.client.request as any)
+        .mockResolvedValueOnce({ result: [] })
+        .mockResolvedValueOnce({ id: 'new-2' });
+
+      await SMTP_HANDLERS['zitadel_set_smtp_config']!({ ...brevo, activate: false }, ctx);
+
+      // only _search + POST — no _activate call
+      expect((ctx.client.request as any).mock.calls.length).toBe(2);
+    });
+  });
+
+  describe('zitadel_activate_smtp_config', () => {
+    it('activates by id', async () => {
+      (ctx.client.request as any).mockResolvedValue({});
+
+      await SMTP_HANDLERS['zitadel_activate_smtp_config']!({ id: 'p1' }, ctx);
+
+      const [path, options] = (ctx.client.request as any).mock.calls[0];
+      expect(path).toBe('/admin/v1/email/p1/_activate');
+      expect(options.method).toBe('POST');
     });
   });
 });

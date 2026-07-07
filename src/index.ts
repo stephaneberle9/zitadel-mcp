@@ -42,7 +42,7 @@ async function main() {
   const handlers = getHandlers(config);
 
   const server = new Server(
-    { name: 'zitadel-mcp-server', version: '1.1.0' },
+    { name: 'zitadel-mcp-server', version: '1.2.0' },
     { capabilities: { tools: {} } }
   );
 
@@ -61,6 +61,8 @@ async function main() {
     'roleKey', 'roleKeys',
     'accessTokenType',
     'expirationDate',
+    // SMTP provider secrets/PII (zitadel_set_smtp_config)
+    'password', 'host', 'user', 'senderAddress', 'replyToAddress',
   ]);
 
   function redactArgs(args: Record<string, unknown>): Record<string, unknown> {
