@@ -150,8 +150,18 @@ export class ZitadelClient {
   /**
    * Make an authenticated request to the Zitadel Management API
    * Includes x-zitadel-orgid header, handles 401 cache clearing and empty responses
+   *
+   * `meta.exposeErrorDetail` opts a single call into surfacing ZITADEL's own error
+   * `message` on failure (appended to the generic text). Off by default so we don't leak
+   * API internals; enable it only where the upstream message is the useful, non-sensitive
+   * payload — e.g. the SMTP-test endpoint, whose failure reason describes the *relay*
+   * configuration ("could not add smtp auth…"), not ZITADEL internals.
    */
-  async request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  async request<T>(
+    path: string,
+    options: RequestInit = {},
+    meta: { exposeErrorDetail?: boolean } = {}
+  ): Promise<T> {
     const token = await this.getAccessToken();
     const url = `${this.config.issuer}${path}`;
 
@@ -196,6 +206,10 @@ export class ZitadelClient {
         message = 'Rate limit exceeded. Please try again later.';
       } else {
         message = `Operation failed (HTTP ${status}). Check server logs for details.`;
+      }
+      // Opt-in: append the upstream reason where it is the point of the call (see doc above).
+      if (meta.exposeErrorDetail && errorData?.message) {
+        message += ` — ${errorData.message}`;
       }
       const err = new Error(message) as Error & { status?: number };
       err.status = status;
