@@ -27,6 +27,7 @@ const EMAIL_SEARCH_PATH = '/admin/v1/email/_search';
 const EMAIL_SMTP_PATH = '/admin/v1/email/smtp';
 const emailSmtpIdPath = (id: string) => `/admin/v1/email/smtp/${id}`;
 const emailActivatePath = (id: string) => `/admin/v1/email/${id}/_activate`;
+const emailSmtpTestPath = (id: string) => `/admin/v1/email/smtp/${id}/_test`;
 
 // ─── Shapes (subset of the settings.v1.EmailProvider message) ────────────────
 
@@ -81,13 +82,17 @@ export const SMTP_TOOLS: ToolDefinition[] = [
       '(Admin API) — affects every org on the instance and needs an IAM-level write grant ' +
       '(ORG_OWNER alone yields 403).\n\n' +
       'CREDENTIALS: prefer `credsProfile` — the relay creds (SMTP_HOST/PORT/USER/PASSWORD/FROM) ' +
-      'are read from a gitignored file (~/.secrets/smtp/.env.<profile>) so the password never ' +
-      'enters the conversation. Any field passed as an argument overrides the file; passing ' +
+      'are read from a gitignored file so the password never enters the conversation. The file ' +
+      'lives under a per-provider folder `~/.secrets/<provider>/.env[.<profile>]` (e.g. ' +
+      '`~/.secrets/brevo/.env.accelerator`); the server auto-discovers the one folder holding ' +
+      'a matching `.env[.<profile>]` with SMTP_* keys. If several providers match, pass ' +
+      '`credsDir` to disambiguate. Any field passed as an argument overrides the file; passing ' +
       '`password` as an argument DOES put it in the transcript — use `credsProfile` instead.',
     inputSchema: {
       type: 'object',
       properties: {
-        credsProfile: { type: 'string', description: 'Non-secret profile name selecting ~/.secrets/smtp/.env.<profile> (omit for ~/.secrets/smtp/.env). The relay creds are read from that file — preferred over passing them as args.' },
+        credsProfile: { type: 'string', description: 'Non-secret profile selecting the `.env.<profile>` file inside the provider folder (omit for the folder\'s base `.env`), e.g. "accelerator". The relay creds are read from that file — preferred over passing them as args.' },
+        credsDir: { type: 'string', description: 'Provider folder to read creds from: a bare name under ~/.secrets (e.g. "brevo") or an absolute path. Needed only to disambiguate when several folders hold a matching .env — otherwise the folder is auto-discovered.' },
         host: { type: 'string', description: 'SMTP host, e.g. "smtp-relay.brevo.com". Overrides SMTP_HOST from the creds file. Port is added from "port" unless already included as host:port.' },
         port: { type: 'number', description: 'SMTP port (default 587). Overrides SMTP_PORT. Ignored if host already contains ":port".' },
         senderAddress: { type: 'string', description: 'From address (verified sender at the relay). Overrides the address parsed from SMTP_FROM.' },
@@ -119,6 +124,26 @@ export const SMTP_TOOLS: ToolDefinition[] = [
     },
     _meta: { readOnly: false, domain: 'notifications' },
     annotations: { title: 'Activate SMTP Config', readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  },
+  {
+    name: 'zitadel_test_smtp_config',
+    description:
+      'Send a real test e-mail through an instance SMTP provider to verify it actually works ' +
+      '(the authoritative check that a set/activate took — a provider can be ACTIVE yet reject ' +
+      'mail because of a wrong SMTP key or unverified sender). Tests by provider id and reuses ' +
+      'the stored password, so no secret enters the conversation. Reports the relay\'s own reason ' +
+      'on failure (e.g. "could not add smtp auth" → bad user/password). Defaults to the currently ' +
+      'ACTIVE provider when no id is given. INSTANCE-level (Admin API) — needs an IAM-level write grant.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        receiverAddress: { type: 'string', description: 'Where to send the test mail (a mailbox you can check), e.g. "you@example.com".' },
+        id: { type: 'string', description: 'Provider id to test (from zitadel_get_smtp_config). Omit to test the currently ACTIVE provider.' },
+      },
+      required: ['receiverAddress'],
+    },
+    _meta: { readOnly: false, domain: 'notifications' },
+    annotations: { title: 'Test SMTP Config', readOnlyHint: false, destructiveHint: false, idempotentHint: false },
   },
 ];
 
@@ -164,6 +189,7 @@ const setSmtpConfigHandler: ToolHandler = async (params, ctx) => {
   const input = z
     .object({
       credsProfile: z.string().max(100).optional(),
+      credsDir: z.string().max(300).optional(),
       host: z.string().min(1).max(500).optional(),
       port: z.number().int().min(1).max(65535).optional(),
       senderAddress: z.string().min(1).max(200).optional(),
@@ -178,8 +204,13 @@ const setSmtpConfigHandler: ToolHandler = async (params, ctx) => {
     .parse(params);
 
   // Read relay creds from the gitignored file (keeps the password out of the transcript);
-  // any explicit arg overrides the file value.
-  const file = loadSmtpCreds(input.credsProfile, process.env['SMTP_ENV_PATH']);
+  // any explicit arg overrides the file value. The provider folder under ~/.secrets is
+  // auto-discovered unless credsDir/SMTP_ENV_PATH pin it.
+  const file = loadSmtpCreds({
+    profile: input.credsProfile,
+    credsDir: input.credsDir,
+    baseEnvPath: process.env['SMTP_ENV_PATH'],
+  });
 
   // SMTP_FROM is a combined "Name <addr>"; split it for ZITADEL's separate name/address fields.
   let senderAddress = input.senderAddress;
@@ -206,9 +237,11 @@ const setSmtpConfigHandler: ToolHandler = async (params, ctx) => {
   if (!user) missing.push('user (SMTP_USER)');
   if (!password) missing.push('password (SMTP_PASSWORD)');
   if (missing.length > 0) {
+    const where = file.sourcePath
+      ? `the creds file ${file.sourcePath}`
+      : `a ~/.secrets/<provider>/.env${input.credsProfile ? `.${input.credsProfile}` : ''} file`;
     throw new Error(
-      `Missing SMTP settings: ${missing.join(', ')}. Put them in ~/.secrets/smtp/.env` +
-        `${input.credsProfile ? `.${input.credsProfile}` : ''} (SMTP_* keys) or pass as arguments.`
+      `Missing SMTP settings: ${missing.join(', ')}. Add the SMTP_* keys to ${where} or pass them as arguments.`
     );
   }
 
@@ -276,7 +309,10 @@ const setSmtpConfigHandler: ToolHandler = async (params, ctx) => {
   return textResponse(
     `${created ? 'Created' : 'Updated'} SMTP provider "${input.description}" (id ${id}).\n` +
     `Endpoint: ${hostAndPort} (tls: ${input.tls ? 'yes' : 'no'}), sender: ${smtpSenderName} <${smtpSenderAddress}>.\n` +
+    `${file.sourcePath ? `Creds read from ${file.sourcePath}.\n` : ''}` +
     `${activated ? 'Activated — ZITADEL now sends notification e-mails through it.' : 'Not activated (activate=false) — call zitadel_activate_smtp_config to switch to it.'}\n\n` +
+    `Next: verify it actually delivers with zitadel_test_smtp_config({ receiverAddress: "you@example.com" }) — ` +
+    `ACTIVE only means selected, not that the relay accepts the key.\n` +
     `Impact: INSTANCE-level change — affects every org on this ZITADEL instance.`
   );
 };
@@ -288,10 +324,56 @@ const activateSmtpConfigHandler: ToolHandler = async (params, ctx) => {
   return textResponse(`Activated SMTP provider ${id}. ZITADEL now sends notification e-mails through it.`);
 };
 
+const testSmtpConfigHandler: ToolHandler = async (params, ctx) => {
+  const input = z
+    .object({
+      receiverAddress: z.string().email('receiverAddress must be a valid e-mail address').max(200),
+      id: z.string().min(1).max(100).optional(),
+    })
+    .parse(params);
+
+  // Default to the ACTIVE provider when no id is given.
+  let id = input.id;
+  if (!id) {
+    const providers = await listSmtpProviders(ctx);
+    const active = providers.find(isActive);
+    if (!active?.id) {
+      throw new Error(
+        'No active SMTP provider to test. Pass an id (from zitadel_get_smtp_config) or set one first with zitadel_set_smtp_config.'
+      );
+    }
+    id = active.id;
+  }
+
+  logger.info('Testing SMTP email provider', { id });
+  try {
+    // Test-by-id reuses the stored password (no secret in the request). Expose the relay's
+    // rejection reason on failure — that reason is the whole point of a test.
+    await ctx.client.request(
+      emailSmtpTestPath(id),
+      { method: 'POST', body: JSON.stringify({ receiverAddress: input.receiverAddress }) },
+      { exposeErrorDetail: true }
+    );
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    return textResponse(
+      `SMTP test FAILED for provider ${id} → ${input.receiverAddress}.\n${detail}\n\n` +
+      `Common causes: wrong SMTP_USER/SMTP_PASSWORD (for Brevo the password must be an SMTP key, ` +
+      `not the account password), an unverified sender, or a blocked port/TLS setting.`
+    );
+  }
+
+  return textResponse(
+    `SMTP test OK — a test e-mail was sent via provider ${id} to ${input.receiverAddress}. ` +
+    `Confirm it arrives (and check the relay's transactional log if it doesn't).`
+  );
+};
+
 // ─── Export ──────────────────────────────────────────────────────────────────
 
 export const SMTP_HANDLERS: Record<string, ToolHandler> = {
   zitadel_get_smtp_config: getSmtpConfigHandler,
   zitadel_set_smtp_config: setSmtpConfigHandler,
   zitadel_activate_smtp_config: activateSmtpConfigHandler,
+  zitadel_test_smtp_config: testSmtpConfigHandler,
 };

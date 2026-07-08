@@ -655,7 +655,11 @@ describe('smtp handlers', () => {
       // Only a non-secret profile name — no host/user/password/sender args.
       const result = await SMTP_HANDLERS['zitadel_set_smtp_config']!({ credsProfile: 'accelerator' }, ctx);
 
-      expect((loadSmtpCreds as any)).toHaveBeenCalledWith('accelerator', undefined);
+      expect((loadSmtpCreds as any)).toHaveBeenCalledWith({
+        profile: 'accelerator',
+        credsDir: undefined,
+        baseEnvPath: undefined,
+      });
       const addBody = JSON.parse((ctx.client.request as any).mock.calls[1][1].body);
       expect(addBody.host).toBe('smtp-relay.brevo.com:587');
       expect(addBody.user).toBe('brevo-login');
@@ -706,6 +710,63 @@ describe('smtp handlers', () => {
       const [path, options] = (ctx.client.request as any).mock.calls[0];
       expect(path).toBe('/admin/v1/email/p1/_activate');
       expect(options.method).toBe('POST');
+    });
+  });
+
+  describe('zitadel_test_smtp_config', () => {
+    it('tests a given provider id, sending the receiver address and opting into error detail', async () => {
+      (ctx.client.request as any).mockResolvedValue({});
+
+      const result = await SMTP_HANDLERS['zitadel_test_smtp_config']!(
+        { id: 'p1', receiverAddress: 'me@example.com' },
+        ctx
+      );
+
+      const [path, options, meta] = (ctx.client.request as any).mock.calls[0];
+      expect(path).toBe('/admin/v1/email/smtp/p1/_test');
+      expect(options.method).toBe('POST');
+      expect(JSON.parse(options.body)).toEqual({ receiverAddress: 'me@example.com' });
+      expect(meta).toEqual({ exposeErrorDetail: true }); // relay reason is the point of a test
+      expect(result.content[0]!.text).toContain('SMTP test OK');
+    });
+
+    it('defaults to the ACTIVE provider when no id is given', async () => {
+      (ctx.client.request as any)
+        .mockResolvedValueOnce({
+          result: [
+            { id: 'old', state: 'EMAIL_PROVIDER_INACTIVE', smtp: { host: 'a:587' } },
+            { id: 'active-1', state: 'EMAIL_PROVIDER_ACTIVE', smtp: { host: 'b:587' } },
+          ],
+        })
+        .mockResolvedValueOnce({});
+
+      await SMTP_HANDLERS['zitadel_test_smtp_config']!({ receiverAddress: 'me@example.com' }, ctx);
+
+      expect((ctx.client.request as any).mock.calls[0][0]).toBe('/admin/v1/email/_search');
+      expect((ctx.client.request as any).mock.calls[1][0]).toBe('/admin/v1/email/smtp/active-1/_test');
+    });
+
+    it('surfaces the relay reason on failure instead of throwing', async () => {
+      const err = new Error('Operation failed (HTTP 500). Check server logs for details. — could not add smtp auth');
+      (ctx.client.request as any).mockRejectedValue(err);
+
+      const result = await SMTP_HANDLERS['zitadel_test_smtp_config']!(
+        { id: 'p1', receiverAddress: 'me@example.com' },
+        ctx
+      );
+
+      expect(result.content[0]!.text).toContain('SMTP test FAILED');
+      expect(result.content[0]!.text).toContain('could not add smtp auth');
+    });
+
+    it('errors when no active provider exists and no id is given', async () => {
+      (ctx.client.request as any).mockResolvedValueOnce({
+        result: [{ id: 'old', state: 'EMAIL_PROVIDER_INACTIVE', smtp: { host: 'a:587' } }],
+      });
+
+      await expect(
+        SMTP_HANDLERS['zitadel_test_smtp_config']!({ receiverAddress: 'me@example.com' }, ctx)
+      ).rejects.toThrow(/No active SMTP provider/);
     });
   });
 });
