@@ -551,18 +551,17 @@ describe('smtp handlers', () => {
 
       expect(result.isError).toBeFalsy();
       expect(result.content[0]!.text).toContain('No SMTP notification provider');
-      // reads via POST /admin/v1/email/_search
+      // reads via POST /admin/v1/smtp/_search (deprecated but functional — see smtp.ts header)
       const [path, options] = (ctx.client.request as any).mock.calls[0];
-      expect(path).toBe('/admin/v1/email/_search');
+      expect(path).toBe('/admin/v1/smtp/_search');
       expect(options.method).toBe('POST');
     });
 
     it('lists SMTP providers, marks the active one, and never returns the password', async () => {
       (ctx.client.request as any).mockResolvedValue({
         result: [
-          { id: 'p1', state: 'EMAIL_PROVIDER_ACTIVE', description: 'Brevo', smtp: { host: 'smtp-relay.brevo.com:587', senderAddress: 'no-reply@ex.com', senderName: 'Ex', tls: true } },
-          { id: 'p2', state: 'EMAIL_PROVIDER_INACTIVE', description: 'old', smtp: { host: 'smtp.old:587' } },
-          { id: 'h1', state: 'EMAIL_PROVIDER_INACTIVE', description: 'webhook', http: { endpoint: 'https://x' } },
+          { id: 'p1', state: 'SMTP_CONFIG_ACTIVE', description: 'Brevo', host: 'smtp-relay.brevo.com:587', senderAddress: 'no-reply@ex.com', senderName: 'Ex', tls: true },
+          { id: 'p2', state: 'SMTP_CONFIG_INACTIVE', description: 'old', host: 'smtp.old:587' },
         ],
       });
 
@@ -571,9 +570,7 @@ describe('smtp handlers', () => {
 
       expect(text).toContain('smtp-relay.brevo.com:587');
       expect(text).toContain('[ACTIVE]');
-      // HTTP webhook provider filtered out; only the 2 SMTP providers counted
       expect(text).toContain('(2, 1 active)');
-      expect(text).not.toContain('webhook');
     });
   });
 
@@ -588,24 +585,33 @@ describe('smtp handlers', () => {
       description: 'Brevo',
     };
 
-    it('creates a new provider (POST), puts the port inside host, uses plain auth, then activates', async () => {
+    it('creates a new provider (POST), puts the port inside host, flat body, then activates', async () => {
       (ctx.client.request as any)
         .mockResolvedValueOnce({ result: [] })       // _search → none
-        .mockResolvedValueOnce({ id: 'new-1' })      // POST /email/smtp → id
-        .mockResolvedValueOnce({});                  // POST /email/new-1/_activate
+        .mockResolvedValueOnce({ id: 'new-1' })      // POST /smtp → id
+        .mockResolvedValueOnce({});                  // POST /smtp/new-1/_activate
 
       const result = await SMTP_HANDLERS['zitadel_set_smtp_config']!(brevo, ctx);
 
       const [addPath, addOpts] = (ctx.client.request as any).mock.calls[1];
-      expect(addPath).toBe('/admin/v1/email/smtp');
+      expect(addPath).toBe('/admin/v1/smtp');
       expect(addOpts.method).toBe('POST');
       const addBody = JSON.parse(addOpts.body);
-      expect(addBody.host).toBe('smtp-relay.brevo.com:587');
-      expect(addBody.plain).toEqual({ password: 'super-secret-key' });
-      expect(addBody.password).toBeUndefined(); // deprecated top-level field not used
+      // flat body — no `plain` wrapper on this endpoint family
+      expect(addBody.plain).toBeUndefined();
+      expect(addBody).toEqual({
+        senderAddress: 'no-reply@ex.com',
+        senderName: 'itemis',
+        tls: true,
+        host: 'smtp-relay.brevo.com:587',
+        user: 'brevo-login',
+        password: 'super-secret-key',
+        replyToAddress: '',
+        description: 'Brevo',
+      });
 
       const [actPath, actOpts] = (ctx.client.request as any).mock.calls[2];
-      expect(actPath).toBe('/admin/v1/email/new-1/_activate');
+      expect(actPath).toBe('/admin/v1/smtp/new-1/_activate');
       expect(actOpts.method).toBe('POST');
 
       const text = result.content[0]!.text;
@@ -614,18 +620,37 @@ describe('smtp handlers', () => {
       expect(text).not.toContain('super-secret-key'); // password never surfaced
     });
 
-    it('updates an existing provider matched by description (PUT to its id)', async () => {
+    it('updates an existing provider matched by description (PUT to its id, id also in body)', async () => {
       (ctx.client.request as any)
-        .mockResolvedValueOnce({ result: [{ id: 'existing-9', description: 'Brevo', smtp: { host: 'smtp-relay.brevo.com:587' } }] })
+        .mockResolvedValueOnce({ result: [{ id: 'existing-9', description: 'Brevo', host: 'smtp-relay.brevo.com:587' }] })
         .mockResolvedValueOnce({})  // PUT
         .mockResolvedValueOnce({}); // activate
 
       await SMTP_HANDLERS['zitadel_set_smtp_config']!(brevo, ctx);
 
       const [putPath, putOpts] = (ctx.client.request as any).mock.calls[1];
-      expect(putPath).toBe('/admin/v1/email/smtp/existing-9');
+      expect(putPath).toBe('/admin/v1/smtp/existing-9');
       expect(putOpts.method).toBe('PUT');
-      expect(JSON.parse(putOpts.body).id).toBe('existing-9');
+      // UpdateSMTPConfigRequest.id is a required body field (min_len:1) even though it's
+      // also in the URL — omitting it is a real validation error on this endpoint.
+      const putBody = JSON.parse(putOpts.body);
+      expect(putBody.id).toBe('existing-9');
+      expect(putBody.host).toBe('smtp-relay.brevo.com:587');
+      expect(putBody.password).toBe('super-secret-key');
+    });
+
+    it('does not fail when the matched provider is already active', async () => {
+      (ctx.client.request as any)
+        .mockResolvedValueOnce({ result: [{ id: 'existing-9', description: 'Brevo', host: 'smtp-relay.brevo.com:587' }] })
+        .mockResolvedValueOnce({}) // PUT
+        .mockRejectedValueOnce(    // activate → already active
+          new Error('Operation failed (HTTP 400). Check server logs for details. — Errors.SMTPConfig.AlreadyActive (COMMAND-vUHBSmBzaw)')
+        );
+
+      const result = await SMTP_HANDLERS['zitadel_set_smtp_config']!(brevo, ctx);
+
+      expect(result.content[0]!.text).toContain('Updated');
+      expect(result.content[0]!.text).toContain('Activated');
     });
 
     it('skips activation when activate=false', async () => {
@@ -663,7 +688,7 @@ describe('smtp handlers', () => {
       const addBody = JSON.parse((ctx.client.request as any).mock.calls[1][1].body);
       expect(addBody.host).toBe('smtp-relay.brevo.com:587');
       expect(addBody.user).toBe('brevo-login');
-      expect(addBody.plain).toEqual({ password: 'file-secret-key' });
+      expect(addBody.password).toBe('file-secret-key');
       // SMTP_FROM split into name + address
       expect(addBody.senderName).toBe('itemis Solutions');
       expect(addBody.senderAddress).toBe('no-reply@itemis.com');
@@ -688,7 +713,7 @@ describe('smtp handlers', () => {
       const addBody = JSON.parse((ctx.client.request as any).mock.calls[1][1].body);
       expect(addBody.senderAddress).toBe('override@ex.com');
       expect(addBody.senderName).toBe('Override');
-      expect(addBody.plain).toEqual({ password: 'file-secret-key' }); // password still from file
+      expect(addBody.password).toBe('file-secret-key'); // password still from file
     });
 
     it('errors listing what is missing when neither file nor args supply it', async () => {
@@ -708,8 +733,31 @@ describe('smtp handlers', () => {
       await SMTP_HANDLERS['zitadel_activate_smtp_config']!({ id: 'p1' }, ctx);
 
       const [path, options] = (ctx.client.request as any).mock.calls[0];
-      expect(path).toBe('/admin/v1/email/p1/_activate');
+      expect(path).toBe('/admin/v1/smtp/p1/_activate');
       expect(options.method).toBe('POST');
+    });
+
+    it('treats "already active" as success instead of throwing (real endpoint behavior)', async () => {
+      // Verified empirically: unlike the newer EmailProvider generation, this deprecated-but-
+      // functional endpoint rejects re-activating an already-active provider with this exact
+      // error — without tolerance the tool's advertised idempotency breaks on a second run.
+      const err = new Error(
+        'Operation failed (HTTP 400). Check server logs for details. — Errors.SMTPConfig.AlreadyActive (COMMAND-vUHBSmBzaw)'
+      );
+      (ctx.client.request as any).mockRejectedValue(err);
+
+      const result = await SMTP_HANDLERS['zitadel_activate_smtp_config']!({ id: 'p1' }, ctx);
+
+      expect(result.content[0]!.text).toContain('Activated SMTP provider p1');
+    });
+
+    it('still throws on a genuinely different error', async () => {
+      const err = new Error('Operation failed (HTTP 403). Check server logs for details. — Permission denied');
+      (ctx.client.request as any).mockRejectedValue(err);
+
+      await expect(
+        SMTP_HANDLERS['zitadel_activate_smtp_config']!({ id: 'p1' }, ctx)
+      ).rejects.toThrow('Permission denied');
     });
   });
 
@@ -723,7 +771,7 @@ describe('smtp handlers', () => {
       );
 
       const [path, options, meta] = (ctx.client.request as any).mock.calls[0];
-      expect(path).toBe('/admin/v1/email/smtp/p1/_test');
+      expect(path).toBe('/admin/v1/smtp/p1/_test');
       expect(options.method).toBe('POST');
       expect(JSON.parse(options.body)).toEqual({ receiverAddress: 'me@example.com' });
       expect(meta).toEqual({ exposeErrorDetail: true }); // relay reason is the point of a test
@@ -734,16 +782,16 @@ describe('smtp handlers', () => {
       (ctx.client.request as any)
         .mockResolvedValueOnce({
           result: [
-            { id: 'old', state: 'EMAIL_PROVIDER_INACTIVE', smtp: { host: 'a:587' } },
-            { id: 'active-1', state: 'EMAIL_PROVIDER_ACTIVE', smtp: { host: 'b:587' } },
+            { id: 'old', state: 'SMTP_CONFIG_INACTIVE', host: 'a:587' },
+            { id: 'active-1', state: 'SMTP_CONFIG_ACTIVE', host: 'b:587' },
           ],
         })
         .mockResolvedValueOnce({});
 
       await SMTP_HANDLERS['zitadel_test_smtp_config']!({ receiverAddress: 'me@example.com' }, ctx);
 
-      expect((ctx.client.request as any).mock.calls[0][0]).toBe('/admin/v1/email/_search');
-      expect((ctx.client.request as any).mock.calls[1][0]).toBe('/admin/v1/email/smtp/active-1/_test');
+      expect((ctx.client.request as any).mock.calls[0][0]).toBe('/admin/v1/smtp/_search');
+      expect((ctx.client.request as any).mock.calls[1][0]).toBe('/admin/v1/smtp/active-1/_test');
     });
 
     it('surfaces the relay reason on failure instead of throwing', async () => {
@@ -761,7 +809,7 @@ describe('smtp handlers', () => {
 
     it('errors when no active provider exists and no id is given', async () => {
       (ctx.client.request as any).mockResolvedValueOnce({
-        result: [{ id: 'old', state: 'EMAIL_PROVIDER_INACTIVE', smtp: { host: 'a:587' } }],
+        result: [{ id: 'old', state: 'SMTP_CONFIG_INACTIVE', host: 'a:587' }],
       });
 
       await expect(

@@ -1,18 +1,39 @@
 /**
  * SMTP / email-provider tools (3 tools)
- * Instance notification SMTP provider via the Zitadel Admin API v1 (/admin/v1/email/*).
+ * Instance notification SMTP provider via the Zitadel Admin API v1.
  *
  * ⚠️ Scope note (deliberate exception to the server's least-privilege stance):
- * Unlike every other tool in this server, these use the **Admin API** (/admin/v1/email/*),
+ * Unlike every other tool in this server, these use the **Admin API** (/admin/v1/*),
  * NOT the org-scoped Management API (see auth/client.ts). The email/SMTP provider is an
  * INSTANCE-level resource shared by every org on the instance, so ZITADEL gates it behind
  * `iam.write` / `iam.read`. The configured service account therefore needs an **IAM-level
  * manager** grant (e.g. IAM_OWNER) — ORG_OWNER alone yields a 403. The `x-zitadel-orgid`
  * header the client always sends is ignored by these instance-scoped endpoints.
  *
- * We target the modern `/admin/v1/email/*` "Email Provider" endpoints (the older
- * `/admin/v1/smtp` family is deprecated). Auth is the SMTPPlainAuth oneof:
- * `plain: { password }`. The `host` field MUST include the port (e.g. "smtp-relay.brevo.com:587").
+ * ⚠️ We deliberately target the DEPRECATED `/admin/v1/smtp/*` ("SMTPConfig") family, not the
+ * newer `/admin/v1/email/*` ("EmailProvider") generation the proto docs point to. This was
+ * verified empirically against a real ZITADEL Cloud instance (2026-07-09), not assumed:
+ *   - `POST /email/smtp/{id}/_test` → `501 method TestEmailProviderSMTPById not implemented`.
+ *   - `POST /email/_search` (list) silently does not reflect updates made via
+ *     `PUT /email/smtp/{id}` — confirmed stale even in ZITADEL's own Console UI, which reads
+ *     the same new-generation list — while `GET /email/{id}` (single-record read) DID show the
+ *     update. So the new generation's *list* and *test* paths are incompletely rolled out on
+ *     this instance; only get/add/update reliably work there.
+ *   - The deprecated `/smtp/*` equivalents (`POST /smtp/_search`, `POST /smtp/{id}/_test`, …)
+ *     work correctly end-to-end: test returns the relay's real auth/delivery result (proven by
+ *     an actual delivered e-mail through Lettermint) instead of 501. `_search` (list) DOES
+ *     eventually catch up, but not necessarily immediately after a `set` — a `get` run right
+ *     after a `set` can still show the pre-update values for a short window. Don't treat that
+ *     as failure; `zitadel_test_smtp_config` (which dials the real host with the real stored
+ *     credentials) is the authoritative check, not `get`.
+ * Revisit this once the new generation's list/test paths are confirmed fixed upstream — the
+ * proto still marks `/smtp/*` deprecated in favor of `/email/*`, so this is a deliberate,
+ * time-bound deviation, not a preference. Body shape is flat (no `plain` oneof wrapper): every
+ * field — including `password` and, for update, `id` — is a top-level sibling (confirmed
+ * against zitadel/zitadel proto `AddSMTPConfigRequest`/`UpdateSMTPConfigRequest`). The `host`
+ * field MUST include the port (e.g. "smtp-relay.brevo.com:587"). Also note: re-activating an
+ * already-active provider 400s with `Errors.SMTPConfig.AlreadyActive` on this endpoint family
+ * (unlike the newer generation) — handled by `activateIdempotently` below.
  */
 
 import { z } from 'zod';
@@ -21,17 +42,21 @@ import { textResponse, zitadelId } from '../types/tools.js';
 import { logger } from '../utils/logger.js';
 import { loadSmtpCreds } from '../utils/smtp-creds.js';
 
-// ─── Endpoints ───────────────────────────────────────────────────────────────
+// ─── Endpoints (deprecated /admin/v1/smtp/* family — see header note) ────────
 
-const EMAIL_SEARCH_PATH = '/admin/v1/email/_search';
-const EMAIL_SMTP_PATH = '/admin/v1/email/smtp';
-const emailSmtpIdPath = (id: string) => `/admin/v1/email/smtp/${id}`;
-const emailActivatePath = (id: string) => `/admin/v1/email/${id}/_activate`;
-const emailSmtpTestPath = (id: string) => `/admin/v1/email/smtp/${id}/_test`;
+const SMTP_SEARCH_PATH = '/admin/v1/smtp/_search';
+const SMTP_PATH = '/admin/v1/smtp';
+const smtpIdPath = (id: string) => `/admin/v1/smtp/${id}`;
+const smtpActivatePath = (id: string) => `/admin/v1/smtp/${id}/_activate`;
+const smtpTestPath = (id: string) => `/admin/v1/smtp/${id}/_test`;
 
-// ─── Shapes (subset of the settings.v1.EmailProvider message) ────────────────
+// ─── Shapes (flat SMTPConfig message — no `smtp`/`plain` nesting) ────────────
 
-interface EmailProviderSmtp {
+interface SmtpConfig {
+  id?: string;
+  /** SMTP_CONFIG_ACTIVE | SMTP_CONFIG_INACTIVE | SMTP_CONFIG_STATE_UNSPECIFIED */
+  state?: string;
+  description?: string;
   senderAddress?: string;
   senderName?: string;
   tls?: boolean;
@@ -39,24 +64,38 @@ interface EmailProviderSmtp {
   user?: string;
 }
 
-interface EmailProvider {
-  id?: string;
-  /** EMAIL_PROVIDER_ACTIVE | EMAIL_PROVIDER_INACTIVE | EMAIL_PROVIDER_STATE_UNSPECIFIED */
-  state?: string;
-  description?: string;
-  smtp?: EmailProviderSmtp;
-  http?: unknown;
+interface ListSmtpConfigsResponse {
+  result?: SmtpConfig[];
 }
 
-interface ListEmailProvidersResponse {
-  result?: EmailProvider[];
-}
-
-interface AddEmailProviderSmtpResponse {
+interface AddSmtpConfigResponse {
   id?: string;
 }
 
-const isActive = (p: EmailProvider) => p.state === 'EMAIL_PROVIDER_ACTIVE';
+const isActive = (p: SmtpConfig) => p.state === 'SMTP_CONFIG_ACTIVE';
+
+/**
+ * Activate a provider, tolerating "already active" as success. Unlike the newer EmailProvider
+ * generation, this deprecated-but-functional endpoint REJECTS activating an already-active
+ * provider with `400 Errors.SMTPConfig.AlreadyActive` — verified empirically against a real
+ * instance. Without this, re-running zitadel_set_smtp_config (or zitadel_activate_smtp_config)
+ * on an already-active provider breaks the tools' advertised idempotency.
+ */
+async function activateIdempotently(ctx: Parameters<ToolHandler>[1], id: string): Promise<void> {
+  try {
+    await ctx.client.request(
+      smtpActivatePath(id),
+      { method: 'POST', body: JSON.stringify({}) },
+      { exposeErrorDetail: true }
+    );
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (!message.includes('AlreadyActive')) {
+      throw e;
+    }
+    logger.info('SMTP provider already active — treating as success', { id });
+  }
+}
 
 // ─── Tool Definitions ────────────────────────────────────────────────────────
 
@@ -111,14 +150,14 @@ export const SMTP_TOOLS: ToolDefinition[] = [
   {
     name: 'zitadel_activate_smtp_config',
     description:
-      'Activate an existing SMTP provider by its id (POST /admin/v1/email/{id}/_activate), so ' +
+      'Activate an existing SMTP provider by its id (POST /admin/v1/smtp/{id}/_activate), so ' +
       'ZITADEL sends notification e-mails through it. INSTANCE-level (Admin API) — needs an ' +
       'IAM-level write grant. Usually not needed separately: zitadel_set_smtp_config activates ' +
       'by default.',
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'The email-provider id (from zitadel_get_smtp_config).' },
+        id: { type: 'string', description: 'The SMTP provider id (from zitadel_get_smtp_config).' },
       },
       required: ['id'],
     },
@@ -149,13 +188,12 @@ export const SMTP_TOOLS: ToolDefinition[] = [
 
 // ─── Handlers ────────────────────────────────────────────────────────────────
 
-async function listSmtpProviders(ctx: Parameters<ToolHandler>[1]): Promise<EmailProvider[]> {
-  const res = await ctx.client.request<ListEmailProvidersResponse>(EMAIL_SEARCH_PATH, {
+async function listSmtpProviders(ctx: Parameters<ToolHandler>[1]): Promise<SmtpConfig[]> {
+  const res = await ctx.client.request<ListSmtpConfigsResponse>(SMTP_SEARCH_PATH, {
     method: 'POST',
     body: JSON.stringify({}),
   });
-  // Keep only SMTP providers (the instance may also hold HTTP webhook providers).
-  return (res.result ?? []).filter((p) => p.smtp);
+  return res.result ?? [];
 }
 
 const getSmtpConfigHandler: ToolHandler = async (_params, ctx) => {
@@ -169,13 +207,12 @@ const getSmtpConfigHandler: ToolHandler = async (_params, ctx) => {
   }
 
   const lines = providers.map((p) => {
-    const s = p.smtp ?? {};
     return [
       `- id: ${p.id ?? '(unknown)'}${isActive(p) ? '  [ACTIVE]' : ''}`,
       `    description: ${p.description || '(none)'}`,
-      `    host: ${s.host || '(none)'}`,
-      `    sender: ${s.senderName ? `${s.senderName} <${s.senderAddress ?? ''}>` : s.senderAddress || '(none)'}`,
-      `    tls: ${s.tls ? 'yes' : 'no'}`,
+      `    host: ${p.host || '(none)'}`,
+      `    sender: ${p.senderName ? `${p.senderName} <${p.senderAddress ?? ''}>` : p.senderAddress || '(none)'}`,
+      `    tls: ${p.tls ? 'yes' : 'no'}`,
     ].join('\n');
   });
 
@@ -260,40 +297,52 @@ const setSmtpConfigHandler: ToolHandler = async (params, ctx) => {
   const existing = providers.find(
     (p) =>
       p.description === input.description ||
-      p.smtp?.host === hostAndPort ||
-      p.smtp?.senderAddress === smtpSenderAddress
+      p.host === hostAndPort ||
+      p.senderAddress === smtpSenderAddress
   );
 
-  // SMTPPlainAuth oneof — the top-level `password` field is deprecated.
-  const configBody = {
-    senderAddress: smtpSenderAddress,
-    senderName: smtpSenderName,
-    tls: input.tls,
-    host: hostAndPort,
-    user: smtpUser,
-    replyToAddress: input.replyToAddress ?? '',
-    description: input.description,
-    plain: { password: smtpPassword },
-  };
-
+  // Flat body — no `plain` wrapper on this (deprecated but functional) endpoint family. On
+  // UPDATE, `id` is a required body field too (UpdateSMTPConfigRequest.id), even though it's
+  // also in the URL — the proto declares it `min_len: 1`, so omitting it is a validation error.
   let id: string;
   let created: boolean;
   if (existing?.id) {
     id = existing.id;
     created = false;
-    logger.info('Updating SMTP email provider', { id });
-    await ctx.client.request(emailSmtpIdPath(id), {
+    const updateBody = {
+      senderAddress: smtpSenderAddress,
+      senderName: smtpSenderName,
+      tls: input.tls,
+      host: hostAndPort,
+      user: smtpUser,
+      replyToAddress: input.replyToAddress ?? '',
+      password: smtpPassword,
+      description: input.description,
+      id,
+    };
+    logger.info('Updating SMTP provider', { id });
+    await ctx.client.request(smtpIdPath(id), {
       method: 'PUT',
-      body: JSON.stringify({ ...configBody, id }),
+      body: JSON.stringify(updateBody),
     });
   } else {
-    logger.info('Adding SMTP email provider');
-    const res = await ctx.client.request<AddEmailProviderSmtpResponse>(EMAIL_SMTP_PATH, {
+    const addBody = {
+      senderAddress: smtpSenderAddress,
+      senderName: smtpSenderName,
+      tls: input.tls,
+      host: hostAndPort,
+      user: smtpUser,
+      password: smtpPassword,
+      replyToAddress: input.replyToAddress ?? '',
+      description: input.description,
+    };
+    logger.info('Adding SMTP provider');
+    const res = await ctx.client.request<AddSmtpConfigResponse>(SMTP_PATH, {
       method: 'POST',
-      body: JSON.stringify(configBody),
+      body: JSON.stringify(addBody),
     });
     if (!res.id) {
-      throw new Error('AddEmailProviderSMTP did not return a provider id');
+      throw new Error('AddSMTPConfig did not return a provider id');
     }
     id = res.id;
     created = true;
@@ -301,8 +350,8 @@ const setSmtpConfigHandler: ToolHandler = async (params, ctx) => {
 
   let activated = false;
   if (input.activate) {
-    logger.info('Activating SMTP email provider', { id });
-    await ctx.client.request(emailActivatePath(id), { method: 'POST', body: JSON.stringify({}) });
+    logger.info('Activating SMTP provider', { id });
+    await activateIdempotently(ctx, id);
     activated = true;
   }
 
@@ -319,8 +368,8 @@ const setSmtpConfigHandler: ToolHandler = async (params, ctx) => {
 
 const activateSmtpConfigHandler: ToolHandler = async (params, ctx) => {
   const { id } = z.object({ id: zitadelId('id') }).parse(params);
-  logger.info('Activating SMTP email provider', { id });
-  await ctx.client.request(emailActivatePath(id), { method: 'POST', body: JSON.stringify({}) });
+  logger.info('Activating SMTP provider', { id });
+  await activateIdempotently(ctx, id);
   return textResponse(`Activated SMTP provider ${id}. ZITADEL now sends notification e-mails through it.`);
 };
 
@@ -345,12 +394,12 @@ const testSmtpConfigHandler: ToolHandler = async (params, ctx) => {
     id = active.id;
   }
 
-  logger.info('Testing SMTP email provider', { id });
+  logger.info('Testing SMTP provider', { id });
   try {
     // Test-by-id reuses the stored password (no secret in the request). Expose the relay's
     // rejection reason on failure — that reason is the whole point of a test.
     await ctx.client.request(
-      emailSmtpTestPath(id),
+      smtpTestPath(id),
       { method: 'POST', body: JSON.stringify({ receiverAddress: input.receiverAddress }) },
       { exposeErrorDetail: true }
     );
