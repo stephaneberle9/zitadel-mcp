@@ -5,7 +5,7 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for [
 > *"Provision jane@example.com as an Admin."*
 > — One tool call: creates the user, assigns the `admin` project role (v2 authorization), and grants `ORG_USER_MANAGER` so she can manage other users — no Super Admin required.
 
-## Tools (35)
+## Tools (37)
 
 | Category | Tool | Description |
 |----------|------|-------------|
@@ -41,6 +41,8 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for [
 | **Organizations** | `zitadel_get_org` | Get current org details |
 | **Login Policy** | `zitadel_get_login_policy` | Get the org login policy (self-registration on/off, custom vs. inherited) |
 | | `zitadel_set_self_registration` | Enable/disable self-registration (`allowRegister`) for the org — idempotent |
+| **Login Texts** *(Login V2)* | `zitadel_get_hosted_login_translation` | Read the new hosted-login (Login V2) text overrides for a locale — merged effective file, or `onlyOverrides` for this level's stored keys |
+| | `zitadel_set_hosted_login_translation` | Override Login V2 texts for a locale (Settings v2 API) — pass flat dot-path keys mirroring `apps/login/locales/<locale>.json`; merges onto shipped defaults, idempotent |
 | **SMTP** *(Admin API, IAM-level)* | `zitadel_get_smtp_config` | List instance SMTP notification providers (active one, host, sender) — secrets never returned |
 | | `zitadel_set_smtp_config` | Configure the instance SMTP provider (e.g. Brevo) and activate it — idempotent; creds auto-discovered from `~/.secrets/<provider>/` |
 | | `zitadel_activate_smtp_config` | Activate an existing SMTP provider by id |
@@ -58,6 +60,25 @@ The provisioning tools implement a standardized RBAC model for the core apps:
 - **Two project (business) roles only:** `admin` and `standard` — these land in the OIDC token and gate what a user can do in the apps. The provisioning tools refuse any other key to prevent drift.
 - **No Super Admin:** every Admin also receives an org-level `ORG_USER_MANAGER` grant (a *manager* role — administers Zitadel itself, not in the token), so any Admin can create/manage any user, including other Admins. Keep ≥2 `ORG_OWNER` break-glass accounts for org configuration.
 - **Role assignment prefers the v2 `AuthorizationService`** (`POST /v2/authorizations`) and **automatically falls back to v1 user-grants** if that endpoint is unavailable on the instance (some Zitadel Cloud versions return 404). Org-manager grants use the Management v1 org-member API.
+
+### Login texts: Login V2 vs. the legacy Custom Login Texts
+
+Zitadel has **two** login UIs with **two unrelated** text mechanisms — mixing them up is a common dead-end:
+
+- **Login V2** (the current default — instance feature `loginV2.required`, or per-app `loginVersion.loginV2`) is the TypeScript/hosted login. Its strings live in the login app's i18n bundles (`apps/login/locales/<lang>.json` in `zitadel/zitadel`). Override individual keys with **`zitadel_set_hosted_login_translation`** (Settings v2 API); overrides merge onto the shipped defaults key-by-key, so upstream fixes to untouched keys still flow through.
+- **Login V1** (legacy Angular login) reads the Management API *Custom Login Texts* (`/management/v1/text/login/{lang}`). **Login V2 ignores those entirely** ([zitadel #8608](https://github.com/zitadel/zitadel/issues/8608)), so this server deliberately does not wrap them.
+
+Practical example — the confusing wrong-password message *"Sitzung für Benutzer konnte nicht erstellt werden"* is the Login V2 key `password.errors.couldNotCreateSessionForUser` (fallback when the password-check error carries no attempt counter). Fix it with:
+
+```jsonc
+zitadel_set_hosted_login_translation({
+  locale: "de",
+  translations: {
+    "password.errors.couldNotCreateSessionForUser": "Benutzername oder Passwort falsch. Bitte versuchen Sie es erneut.",
+    "loginname.errors.couldNotCreateSession": "Benutzername oder Passwort falsch. Bitte versuchen Sie es erneut."
+  }
+})
+```
 
 ## Prerequisites
 

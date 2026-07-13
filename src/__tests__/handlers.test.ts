@@ -12,6 +12,7 @@ import { ROLE_HANDLERS } from '../tools/roles.js';
 import { SERVICE_ACCOUNT_HANDLERS } from '../tools/service-accounts.js';
 import { ORG_HANDLERS } from '../tools/organizations.js';
 import { SMTP_HANDLERS } from '../tools/smtp.js';
+import { LOGIN_TEXTS_HANDLERS } from '../tools/login-texts.js';
 import { loadSmtpCreds } from '../utils/smtp-creds.js';
 import { UTILITY_HANDLERS } from '../tools/utility.js';
 
@@ -815,6 +816,107 @@ describe('smtp handlers', () => {
       await expect(
         SMTP_HANDLERS['zitadel_test_smtp_config']!({ receiverAddress: 'me@example.com' }, ctx)
       ).rejects.toThrow(/No active SMTP provider/);
+    });
+  });
+});
+
+// ─── Hosted login translation handlers (Login V2) ─────────────────────────────
+
+describe('hosted login translation handlers', () => {
+  let ctx: HandlerContext;
+
+  beforeEach(() => {
+    ctx = createMockContext();
+  });
+
+  describe('zitadel_get_hosted_login_translation', () => {
+    it('reads the merged effective file at org level by default and reports the key count', async () => {
+      (ctx.client.request as any).mockResolvedValue({
+        etag: 'abc',
+        translations: { password: { errors: { couldNotCreateSessionForUser: 'x' } }, common: { back: 'Zurück' } },
+      });
+
+      const result = await LOGIN_TEXTS_HANDLERS['zitadel_get_hosted_login_translation']!({ locale: 'de' }, ctx);
+
+      const [path] = (ctx.client.request as any).mock.calls[0];
+      // org-scoped, effective (ignoreInheritance=false) by default
+      expect(path).toContain('organizationId=org-789');
+      expect(path).toContain('locale=de');
+      expect(path).toContain('ignoreInheritance=false');
+      expect(result.content[0]!.text).toContain('2 keys');
+    });
+
+    it('reports "no overrides" when onlyOverrides=true returns empty', async () => {
+      (ctx.client.request as any).mockResolvedValue({ translations: {} });
+
+      const result = await LOGIN_TEXTS_HANDLERS['zitadel_get_hosted_login_translation']!(
+        { locale: 'de', onlyOverrides: true },
+        ctx
+      );
+
+      expect((ctx.client.request as any).mock.calls[0][0]).toContain('ignoreInheritance=true');
+      expect(result.content[0]!.text).toContain('No Login V2 text overrides');
+    });
+  });
+
+  describe('zitadel_set_hosted_login_translation', () => {
+    it('reads this level\'s own overrides, deep-merges the dot-path patch, and PUTs the result', async () => {
+      // Existing override at this level (must be preserved).
+      (ctx.client.request as any)
+        .mockResolvedValueOnce({ translations: { loginname: { errors: { couldNotFindIdentityProvider: 'keep me' } } } })
+        .mockResolvedValueOnce({ etag: 'new-etag' });
+
+      const result = await LOGIN_TEXTS_HANDLERS['zitadel_set_hosted_login_translation']!(
+        {
+          locale: 'de',
+          translations: {
+            'password.errors.couldNotCreateSessionForUser': 'Benutzername oder Passwort falsch.',
+            'loginname.errors.couldNotCreateSession': 'Benutzername oder Passwort falsch.',
+          },
+        },
+        ctx
+      );
+
+      // 1st call: read only this level's overrides
+      expect((ctx.client.request as any).mock.calls[0][0]).toContain('ignoreInheritance=true');
+
+      // 2nd call: PUT merged body
+      const [putPath, putOpts] = (ctx.client.request as any).mock.calls[1];
+      expect(putPath).toBe('/v2/settings/hosted_login_translation');
+      expect(putOpts.method).toBe('PUT');
+      const body = JSON.parse(putOpts.body);
+      expect(body.organizationId).toBe('org-789');
+      expect(body.locale).toBe('de');
+      // dot-paths expanded to nested
+      expect(body.translations.password.errors.couldNotCreateSessionForUser).toBe('Benutzername oder Passwort falsch.');
+      expect(body.translations.loginname.errors.couldNotCreateSession).toBe('Benutzername oder Passwort falsch.');
+      // pre-existing override preserved (not clobbered)
+      expect(body.translations.loginname.errors.couldNotFindIdentityProvider).toBe('keep me');
+
+      expect(result.content[0]!.text).toContain('ORG-level');
+    });
+
+    it('targets the instance when level="instance"', async () => {
+      (ctx.client.request as any)
+        .mockResolvedValueOnce({ translations: {} })
+        .mockResolvedValueOnce({ etag: 'e' });
+
+      await LOGIN_TEXTS_HANDLERS['zitadel_set_hosted_login_translation']!(
+        { locale: 'en', level: 'instance', translations: { 'password.errors.couldNotCreateSessionForUser': 'Incorrect username or password.' } },
+        ctx
+      );
+
+      expect((ctx.client.request as any).mock.calls[0][0]).toContain('instance=true');
+      const body = JSON.parse((ctx.client.request as any).mock.calls[1][1].body);
+      expect(body.instance).toBe(true);
+      expect(body.organizationId).toBeUndefined();
+    });
+
+    it('rejects an empty translations map', async () => {
+      await expect(
+        LOGIN_TEXTS_HANDLERS['zitadel_set_hosted_login_translation']!({ locale: 'de', translations: {} }, ctx)
+      ).rejects.toThrow();
+      expect((ctx.client.request as any).mock.calls.length).toBe(0);
     });
   });
 });

@@ -10,6 +10,24 @@ Entries below cover changes made on top of upstream `v1.0.2` (commit `e3bd79c`).
 
 ### Added
 
+- **Hosted login translation tools (Login V2 / TypeScript login):**
+  - `zitadel_get_hosted_login_translation` — read the Login V2 text overrides for a locale via
+    the Settings v2 API (`GET /v2/settings/hosted_login_translation`); returns the merged
+    effective file, or only this level's stored overrides with `onlyOverrides: true`.
+  - `zitadel_set_hosted_login_translation` — override Login V2 texts for a locale
+    (`PUT /v2/settings/hosted_login_translation`). Accepts flat dot-path keys mirroring
+    `apps/login/locales/<locale>.json` in `zitadel/zitadel` (e.g.
+    `password.errors.couldNotCreateSessionForUser`). Idempotent: reads this level's own
+    overrides (`ignoreInheritance=true`), deep-merges the patch, and writes the result — so
+    other overrides and untouched defaults are preserved (never writes the full default bundle
+    back).
+  - **Why a new mechanism:** the legacy Management *Custom Login Texts*
+    (`/management/v1/text/login`) feed only the deprecated Login V1 UI; the current Login V2
+    ignores them ([zitadel #8608](https://github.com/zitadel/zitadel/issues/8608)) and reads
+    Settings-v2 hosted-login translations instead ([#9850](https://github.com/zitadel/zitadel/issues/9850)).
+    Defaults to org level (least-privilege, like the login-policy tools); `level: "instance"`
+    targets the whole instance. Reuses the `organizations` tool domain.
+
 - **SMTP / email-provider tools (Admin API, IAM-level):**
   - `zitadel_get_smtp_config` — list the instance SMTP notification providers (which one is
     active, its host and sender); secrets are never returned.
