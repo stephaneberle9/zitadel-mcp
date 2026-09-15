@@ -18,9 +18,8 @@ jobs:
         # Node 18 reached end-of-life in April 2025 and is no longer testable here:
         # vitest >= 4.1.11 (required to clear GHSA-82fw-gwwq-j7x9, critical) pulls a
         # rolldown build that imports `styleText` from node:util, which Node 18 lacks,
-        # so the test runner cannot start. `npm ci` and `npm run build` still pass on
-        # Node 18, and package.json still declares engines >= 18.0.0 — but that floor
-        # is no longer exercised by CI.
+        # so the test runner cannot start. package.json declares engines >= 20.0.0
+        # to match: every version this project claims to support is tested here.
         node-version: [20, 22]
 
     steps:
