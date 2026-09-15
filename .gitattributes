@@ -1,0 +1,11 @@
+# Normalize every text file to LF in the repository and in the working tree.
+#
+# Before this, the repo held a mix: 26 files committed with CRLF (the original
+# codebase) and 11 with LF (later additions). With no rule in place, any tool
+# that rewrote a file wholesale flipped its endings, and Git then reported every
+# line as changed — a three-line README edit once produced a 293-line diff.
+#
+# text=auto  — Git decides text vs binary per file
+# eol=lf     — text files are LF in the index AND checked out as LF everywhere,
+#              so Windows contributors cannot reintroduce CRLF by editing.
+* text=auto eol=lf
