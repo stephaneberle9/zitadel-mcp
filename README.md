@@ -108,6 +108,19 @@ Add the server to your MCP client config. The JSON block below works for both op
 
 Restart Claude Code after adding the config. The Zitadel tools will appear automatically.
 
+To keep secrets out of the MCP client config, omit the `env` block and put the variables in a gitignored `.env` file instead. The server reads the file named by `DOTENV_CONFIG_PATH` if set, then the `.env` in the repo root. Variables already present in the process environment (e.g. from an `env` block) take precedence over both. `DOTENV_CONFIG_PATH` is what makes a globally installed binary work without machine-specific paths:
+
+```json
+{
+  "mcpServers": {
+    "zitadel": {
+      "command": "zitadel-mcp",
+      "env": { "DOTENV_CONFIG_PATH": "/home/me/.config/zitadel-mcp/.env" }
+    }
+  }
+}
+```
+
 ### Environment Variables
 
 | Variable | Required | Description |
@@ -121,6 +134,7 @@ Restart Claude Code after adding the config. The Zitadel tools will appear autom
 | `PORTAL_DATABASE_URL` | No | Postgres connection string (enables portal tools) |
 | `ZITADEL_ENABLE_LOGIN_POLICY_WRITE` | No | Set `true` to expose `zitadel_set_self_registration` (default: off) |
 | `LOG_LEVEL` | No | `DEBUG`, `INFO`, `WARN`, `ERROR` (default: `INFO`) |
+| `DOTENV_CONFIG_PATH` | No | Path of a `.env` file to load the variables above from (read before the repo-root `.env`) |
 
 ## Security
 

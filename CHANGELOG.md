@@ -10,6 +10,11 @@ Entries below cover changes made on top of upstream `v1.0.2` (commit `e3bd79c`).
 
 ### Added
 
+- **`DOTENV_CONFIG_PATH`** — load the server's variables from a `.env` file at a configurable
+  path, read before the repo-root `.env`. A globally installed `zitadel-mcp` binary can now
+  find secrets kept outside the package without a `-r dotenv/config` preload or an inline
+  `env` block of secrets. Variables already in the process environment still win.
+
 - **Login-policy tools (org-scoped, ORG_OWNER):**
   - `zitadel_get_login_policy` — report the current org's login policy: whether
     self-registration (`allowRegister`) is on, and whether the policy is a custom org
