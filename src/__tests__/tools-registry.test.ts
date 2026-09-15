@@ -13,6 +13,14 @@ import { ORG_MEMBER_TOOLS, ORG_MEMBER_HANDLERS } from '../tools/org-members.js';
 import { PROVISIONING_TOOLS, PROVISIONING_HANDLERS } from '../tools/provisioning.js';
 import { UTILITY_TOOLS, UTILITY_HANDLERS } from '../tools/utility.js';
 import { PORTAL_TOOLS, PORTAL_HANDLERS } from '../tools/portal.js';
+import {
+  LOGIN_POLICY_TOOLS,
+  LOGIN_POLICY_HANDLERS,
+  LOGIN_POLICY_WRITE_TOOLS,
+  LOGIN_POLICY_WRITE_HANDLERS,
+} from '../tools/login-policy.js';
+import { getTools, getHandlers } from '../tools/index.js';
+import type { ZitadelConfig } from '../utils/config.js';
 import type { ToolDefinition } from '../types/tools.js';
 
 const ALL_MODULES = [
@@ -26,15 +34,18 @@ const ALL_MODULES = [
   { name: 'provisioning', tools: PROVISIONING_TOOLS, handlers: PROVISIONING_HANDLERS },
   { name: 'utility', tools: UTILITY_TOOLS, handlers: UTILITY_HANDLERS },
   { name: 'portal', tools: PORTAL_TOOLS, handlers: PORTAL_HANDLERS },
+  { name: 'login-policy', tools: LOGIN_POLICY_TOOLS, handlers: LOGIN_POLICY_HANDLERS },
+  { name: 'login-policy-write', tools: LOGIN_POLICY_WRITE_TOOLS, handlers: LOGIN_POLICY_WRITE_HANDLERS },
 ];
 
 describe('tool registry', () => {
-  it('has 33 total tools', () => {
+  it('has 35 total tools', () => {
     // 8 user + 3 project + 4 application + 5 role + 3 service-account + 1 org
-    // + 4 org-member + 2 provisioning + 1 utility + 2 portal = 33
+    // + 4 org-member + 2 provisioning + 1 utility + 2 portal
+    // + 1 login-policy (read) + 1 login-policy (write, gated) = 35
     // (zitadel_list_orgs removed in REM-22 — uses Admin API, violates least-privilege)
     const total = ALL_MODULES.reduce((sum, m) => sum + m.tools.length, 0);
-    expect(total).toBe(33);
+    expect(total).toBe(35);
   });
 
   it('has no duplicate tool names', () => {
@@ -98,4 +109,51 @@ describe('tool definitions', () => {
       });
     });
   }
+});
+
+// ─── Conditional registration gates ──────────────────────────────────────────
+
+describe('conditional tool registration', () => {
+  const baseConfig = {
+    issuer: 'https://example.zitadel.cloud',
+    serviceAccountUserId: 'u1',
+    serviceAccountKeyId: 'k1',
+    serviceAccountPrivateKey: 'pk',
+    orgId: 'o1',
+    readOnly: false,
+    logLevel: 'INFO',
+    loginPolicyWriteEnabled: false,
+  } as ZitadelConfig;
+
+  const names = (config: ZitadelConfig) => getTools(config).map(t => t.name);
+
+  describe('login-policy write gate', () => {
+    it('omits zitadel_set_self_registration by default', () => {
+      expect(names(baseConfig)).not.toContain('zitadel_set_self_registration');
+      expect(getHandlers(baseConfig)['zitadel_set_self_registration']).toBeUndefined();
+    });
+
+    it('registers zitadel_set_self_registration when explicitly enabled', () => {
+      const config = { ...baseConfig, loginPolicyWriteEnabled: true };
+      expect(names(config)).toContain('zitadel_set_self_registration');
+      expect(typeof getHandlers(config)['zitadel_set_self_registration']).toBe('function');
+    });
+
+    it('always exposes the read-only zitadel_get_login_policy', () => {
+      expect(names(baseConfig)).toContain('zitadel_get_login_policy');
+      expect(names({ ...baseConfig, loginPolicyWriteEnabled: true }))
+        .toContain('zitadel_get_login_policy');
+    });
+  });
+
+  describe('portal gate', () => {
+    it('omits portal tools without PORTAL_DATABASE_URL', () => {
+      expect(names(baseConfig)).not.toContain('portal_register_app');
+    });
+
+    it('registers portal tools when PORTAL_DATABASE_URL is set', () => {
+      const config = { ...baseConfig, portalDatabaseUrl: 'postgres://localhost/portal' };
+      expect(names(config)).toContain('portal_register_app');
+    });
+  });
 });

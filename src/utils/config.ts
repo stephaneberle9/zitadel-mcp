@@ -24,6 +24,7 @@ const configSchema = z.object({
     )
     .optional(),
   readOnly: z.boolean().default(false),
+  loginPolicyWriteEnabled: z.boolean().default(false),
   logLevel: z.enum(['DEBUG', 'INFO', 'WARN', 'ERROR']).default('INFO'),
 });
 
@@ -39,6 +40,7 @@ export function loadConfig(): ZitadelConfig {
     projectId: process.env['ZITADEL_PROJECT_ID'] || undefined,
     portalDatabaseUrl: process.env['PORTAL_DATABASE_URL'] || undefined,
     readOnly: process.env['ZITADEL_READ_ONLY'] === 'true',
+    loginPolicyWriteEnabled: process.env['ZITADEL_ENABLE_LOGIN_POLICY_WRITE'] === 'true',
     logLevel: process.env['LOG_LEVEL'] || 'INFO',
   });
 
@@ -52,4 +54,13 @@ export function loadConfig(): ZitadelConfig {
 
 export function isPortalEnabled(config: ZitadelConfig): boolean {
   return !!config.portalDatabaseUrl;
+}
+
+/**
+ * Login-policy WRITE tools (zitadel_set_self_registration) are opt-in.
+ * Toggling self-registration opens the org to public signup org-wide and leaves no
+ * object behind to audit, so it stays unavailable unless explicitly enabled.
+ */
+export function isLoginPolicyWriteEnabled(config: ZitadelConfig): boolean {
+  return config.loginPolicyWriteEnabled;
 }

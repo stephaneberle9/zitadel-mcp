@@ -48,6 +48,7 @@ const LOGIN_POLICY_PATH = '/management/v1/policies/login';
 
 // ─── Tool Definitions ────────────────────────────────────────────────────────
 
+/** Read-only login-policy tools — always registered. */
 export const LOGIN_POLICY_TOOLS: ToolDefinition[] = [
   {
     name: 'zitadel_get_login_policy',
@@ -59,6 +60,20 @@ export const LOGIN_POLICY_TOOLS: ToolDefinition[] = [
     _meta: { readOnly: true, domain: 'organizations' },
     annotations: { title: 'Get Login Policy', readOnlyHint: true, destructiveHint: false, idempotentHint: true },
   },
+];
+
+/**
+ * Write tools that change the org's login policy. Registered ONLY when
+ * ZITADEL_ENABLE_LOGIN_POLICY_WRITE=true (see utils/config.ts).
+ *
+ * Rationale: zitadel_set_self_registration can open the org to public signup — a
+ * silent, org-wide change that leaves no user record behind to notice. Every other
+ * write tool here creates or alters a specific, auditable object. Keeping this one
+ * off by default means an agent acting on injected instructions cannot reach it
+ * unless the operator deliberately turned it on, mirroring the opt-in treatment
+ * PORTAL_TOOLS already gets via isPortalEnabled().
+ */
+export const LOGIN_POLICY_WRITE_TOOLS: ToolDefinition[] = [
   {
     name: 'zitadel_set_self_registration',
     description:
@@ -157,5 +172,9 @@ const setSelfRegistrationHandler: ToolHandler = async (params, ctx) => {
 
 export const LOGIN_POLICY_HANDLERS: Record<string, ToolHandler> = {
   zitadel_get_login_policy: getLoginPolicyHandler,
+};
+
+/** Paired with LOGIN_POLICY_WRITE_TOOLS — only registered when the write gate is on. */
+export const LOGIN_POLICY_WRITE_HANDLERS: Record<string, ToolHandler> = {
   zitadel_set_self_registration: setSelfRegistrationHandler,
 };

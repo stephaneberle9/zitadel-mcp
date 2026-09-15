@@ -40,12 +40,14 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for [
 | | `zitadel_list_service_user_keys` | List keys (metadata only) |
 | **Organizations** | `zitadel_get_org` | Get current org details |
 | **Login Policy** | `zitadel_get_login_policy` | Get the org login policy (self-registration on/off, custom vs. inherited) |
-| | `zitadel_set_self_registration` | Enable/disable self-registration (`allowRegister`) for the org — idempotent |
+| | `zitadel_set_self_registration` | Enable/disable self-registration (`allowRegister`) for the org — idempotent. **Opt-in:** requires `ZITADEL_ENABLE_LOGIN_POLICY_WRITE=true` |
 | **Utility** | `zitadel_get_auth_config` | Get .env.local template for an app |
 | **Portal** | `portal_register_app` | Register app in portal DB |
 | | `portal_setup_full_app` | One-click: Zitadel + portal setup |
 
 Portal tools (`portal_*`) are only available when `PORTAL_DATABASE_URL` is configured.
+
+`zitadel_set_self_registration` is only available when `ZITADEL_ENABLE_LOGIN_POLICY_WRITE=true`. It is off by default because enabling self-registration opens the organization to public signup for every application whose login resolves to that org, and — unlike every other write tool here — the change leaves behind no user, grant, or app record that would make it noticeable. The read-only `zitadel_get_login_policy` is always available.
 
 ### Two-role model & no-super-admin (Renewal Initiatives SSO)
 
@@ -117,6 +119,7 @@ Restart Claude Code after adding the config. The Zitadel tools will appear autom
 | `ZITADEL_ORG_ID` | Yes | Organization ID |
 | `ZITADEL_PROJECT_ID` | No | Default project ID for role operations |
 | `PORTAL_DATABASE_URL` | No | Postgres connection string (enables portal tools) |
+| `ZITADEL_ENABLE_LOGIN_POLICY_WRITE` | No | Set `true` to expose `zitadel_set_self_registration` (default: off) |
 | `LOG_LEVEL` | No | `DEBUG`, `INFO`, `WARN`, `ERROR` (default: `INFO`) |
 
 ## Security
