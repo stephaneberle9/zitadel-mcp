@@ -1,0 +1,6 @@
+# Revisions to skip when running git blame — whole-repo reformatting that
+# changed no code. GitHub applies this file automatically; locally, run:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# chore: normalize all line endings to LF via .gitattributes
+eb846da9e4e116373f81266803481e4b4ab8bd08
