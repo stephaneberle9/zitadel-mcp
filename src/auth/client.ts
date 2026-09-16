@@ -22,8 +22,39 @@
 import { SignJWT, importPKCS8, type KeyLike } from 'jose';
 import { createPrivateKey } from 'crypto';
 import type { ZitadelConfig } from '../utils/config.js';
-import type { ZitadelError } from '../types/zitadel.js';
 import { logger } from '../utils/logger.js';
+
+/**
+ * Summarize an error response body for the server log.
+ *
+ * Both failure paths below already fetched the body; without this it was parsed or read and
+ * then dropped, so the log showed a bare status and the one string naming the actual problem
+ * never reached the operator. OAuth errors carry `error` / `error_description`
+ * ("invalid_grant" / "invalid assertion" for a service-account id that is not the user's
+ * numeric ID, say) and Zitadel API errors carry `message`. Anything else is logged as a
+ * truncated snippet, so an HTML error page from a proxy cannot flood the log.
+ */
+function describeErrorBody(body: string): Record<string, string> {
+  const trimmed = body.trim();
+  if (!trimmed) return {};
+
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      error?: string;
+      error_description?: string;
+      message?: string;
+    };
+    const detail: Record<string, string> = {};
+    if (parsed.error) detail['error'] = parsed.error;
+    if (parsed.error_description) detail['errorDescription'] = parsed.error_description;
+    if (parsed.message) detail['message'] = parsed.message;
+    if (Object.keys(detail).length > 0) return detail;
+  } catch {
+    // Not JSON — fall through to the raw snippet.
+  }
+
+  return { body: trimmed.length > 300 ? `${trimmed.slice(0, 300)}…` : trimmed };
+}
 
 export class ZitadelClient {
   private config: ZitadelConfig;
@@ -129,8 +160,11 @@ export class ZitadelClient {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      logger.error('Token exchange failed', { status: response.status });
+      const errorBody = await response.text();
+      logger.error('Token exchange failed', {
+        status: response.status,
+        ...describeErrorBody(errorBody),
+      });
       throw new Error(`Failed to obtain access token (HTTP ${response.status})`);
     }
 
@@ -162,15 +196,15 @@ export class ZitadelClient {
     const response = await fetch(url, { ...options, headers });
 
     if (!response.ok) {
-      let errorData: ZitadelError | null = null;
-      try {
-        errorData = await response.json() as ZitadelError;
-      } catch {
-        // Ignore JSON parse errors
-      }
+      // Read the body as text, so a non-JSON error page is still loggable.
+      const errorBody = await response.text();
 
       // Log full error details internally
-      logger.error('Zitadel API error', { status: response.status, path });
+      logger.error('Zitadel API error', {
+        status: response.status,
+        path,
+        ...describeErrorBody(errorBody),
+      });
 
       // Clear token cache on auth failures
       if (response.status === 401) {
