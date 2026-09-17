@@ -89,8 +89,12 @@ async function getUserById(ctx: HandlerContext, userId: string): Promise<Zitadel
   try {
     const resp = await ctx.client.request<GetUserResponse>(`/v2/users/${userId}`);
     return resp.user;
-  } catch {
-    return null;
+  } catch (e) {
+    // Only "no such user" means keep looking (callers fall back to the email lookup).
+    // A 403 or a 5xx must not masquerade as a missing user: provision_user would go on to
+    // create a duplicate, and offboard_user would report a user that exists as not found.
+    if ((e as { status?: number }).status === 404) return null;
+    throw e;
   }
 }
 
