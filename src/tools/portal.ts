@@ -190,7 +190,12 @@ const portalSetupFullAppHandler: ToolHandler = async (params, ctx) => {
     );
     results.push(`3. Created role: ${roleKey}`);
   } catch (error) {
-    // Role may already exist — that's fine
+    // 409 is the idempotent case: Zitadel answers a duplicate roleKey with
+    // Errors.Project.Role.AlreadyExists (ALREADY_EXISTS → HTTP 409). Anything else — a
+    // permission problem, a validation error, an outage — must not be reported as a
+    // successful skip, which previously left the portal row pointing at a role that was
+    // never created.
+    if ((error as { status?: number }).status !== 409) throw error;
     results.push(`3. Role ${roleKey} already exists (skipped)`);
   }
 
