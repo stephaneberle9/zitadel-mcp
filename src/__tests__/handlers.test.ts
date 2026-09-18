@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { join, sep } from 'node:path';
 import type { HandlerContext } from '../types/tools.js';
 import type { ZitadelConfig } from '../utils/config.js';
 import { USER_HANDLERS } from '../tools/users.js';
@@ -491,7 +492,9 @@ describe('service account handlers', () => {
       expect(result.content[0]!.text).toContain('key-new');
       // Key is saved to file, not shown in response (REM-01)
       expect(result.content[0]!.text).toContain('Private key saved to');
-      expect(result.content[0]!.text).toContain('.zitadel-mcp/keys/');
+      // Built with join()/sep rather than a POSIX literal: the handler uses path.join, so the
+      // separator is native. The hardcoded '.zitadel-mcp/keys/' failed every run on Windows.
+      expect(result.content[0]!.text).toContain(join('.zitadel-mcp', 'keys') + sep);
     });
   });
 });
