@@ -103,7 +103,7 @@ describe('user handlers', () => {
           state: 'USER_STATE_ACTIVE',
           human: {
             profile: { givenName: 'Jane', familyName: 'Doe' },
-            email: { email: 'jane@test.com', isEmailVerified: true },
+            email: { email: 'jane@test.com', isVerified: true },
           },
           loginNames: ['jane@test.zitadel.cloud'],
           details: { creationDate: '2025-01-01T00:00:00Z' },
@@ -115,6 +115,26 @@ describe('user handlers', () => {
       expect(result.content[0]!.text).toContain('Jane Doe');
       expect(result.content[0]!.text).toContain('jane@test.com');
       expect(result.content[0]!.text).toContain('Email Verified: true');
+    });
+
+    it('reports an unverified email as false, the v2 API omitting the flag', async () => {
+      (ctx.client.request as any).mockResolvedValue({
+        user: {
+          userId: 'u2',
+          username: 'john',
+          state: 'USER_STATE_ACTIVE',
+          human: {
+            profile: { givenName: 'John', familyName: 'Doe' },
+            email: { email: 'john@test.com' },
+          },
+          loginNames: ['john@test.zitadel.cloud'],
+          details: { creationDate: '2025-01-01T00:00:00Z' },
+        },
+      });
+
+      const result = await USER_HANDLERS['zitadel_get_user']!({ userId: 'u2' }, ctx);
+
+      expect(result.content[0]!.text).toContain('Email Verified: false');
     });
 
     it('rejects missing userId', async () => {
