@@ -50,12 +50,14 @@ export interface HumanProfile {
 
 export interface HumanEmail {
   email: string;
-  isEmailVerified: boolean;
+  /** Omitted by the v2 API when false. */
+  isVerified?: boolean;
 }
 
 export interface HumanPhone {
   phone?: string;
-  isPhoneVerified?: boolean;
+  /** Omitted by the v2 API when false. */
+  isVerified?: boolean;
 }
 
 export interface ZitadelUserDetails {
