@@ -11,6 +11,12 @@ Fork-only changes on top of upstream `2.0.0`; they are not part of
 
 ### Added
 
+- **Default secrets file `~/.secrets/zitadel/.env`** — when `DOTENV_CONFIG_PATH` is not set,
+  the server reads its variables from `~/.secrets/zitadel/.env` (upstream reads a `.env`
+  file outside the package only when `DOTENV_CONFIG_PATH` names one). A globally installed
+  or linked `zitadel-mcp` binary therefore starts from an MCP config that carries no `env`
+  block and no machine-specific path. Precedence is unchanged: variables already in the
+  process environment win, then this file, then the repo-root `.env`.
 - **SMTP / email-provider tools (Admin API, IAM-level):**
   - `zitadel_get_smtp_config` — list the instance SMTP notification providers (which one is
     active, its host and sender); secrets are never returned.
