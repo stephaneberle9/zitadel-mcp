@@ -7,15 +7,16 @@
 import { config as loadDotenv } from 'dotenv';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
 // Load secrets from a gitignored .env regardless of the process working directory.
 // Existing process env vars take precedence (override: false), so an inline MCP `env`
 // block still wins. Precedence between the two files (first one to set a var wins):
-//   1. DOTENV_CONFIG_PATH, if set — lets a globally installed `zitadel-mcp` binary read
-//      secrets kept outside the package, without a `-r dotenv/config` preload.
+//   1. DOTENV_CONFIG_PATH if set, else the conventional ~/.secrets/zitadel/.env — lets a
+//      globally installed `zitadel-mcp` binary read secrets kept outside the package, without
+//      a `-r dotenv/config` preload or machine-specific paths in .mcp.json. The default is a
+//      fork-only convention; upstream honors the variable alone.
 //   2. the repo-root .env (one level up from build/ or src/), for running from source.
-if (process.env.DOTENV_CONFIG_PATH) {
-  loadDotenv({ path: process.env.DOTENV_CONFIG_PATH });
-}
+loadDotenv({ path: process.env.DOTENV_CONFIG_PATH ?? join(homedir(), '.secrets', 'zitadel', '.env') });
 loadDotenv({ path: join(dirname(fileURLToPath(import.meta.url)), '..', '.env') });
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
