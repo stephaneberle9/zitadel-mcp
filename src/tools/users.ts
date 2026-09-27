@@ -185,7 +185,8 @@ const getUserHandler: ToolHandler = async (params, ctx) => {
     `User: ${name}`,
     `ID: ${u.userId}`,
     `Email: ${u.human?.email?.email || 'N/A'}`,
-    `Email Verified: ${u.human?.email?.isEmailVerified ?? 'N/A'}`,
+    // The v2 API names the flag `isVerified`, and omits it when false (proto3 JSON).
+    `Email Verified: ${u.human?.email ? u.human.email.isVerified === true : 'N/A'}`,
     `State: ${u.state.replace('USER_STATE_', '')}`,
     `Username: ${u.username}`,
     `Login Names: ${(u.loginNames || []).join(', ')}`,
