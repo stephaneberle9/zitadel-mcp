@@ -48,6 +48,16 @@ Fork-only changes on top of upstream `2.0.0`; they are not part of
     overrides the file), but passing `password` that way puts it in the transcript.
     `SMTP_FROM` ("Name &lt;addr&gt;") is split into ZITADEL's sender name/address.
 
+### Changed
+
+- **The npm package is named `@stephaneberle9/zitadel-mcp-server`** instead of
+  `zitadel-mcp-server`, the name upstream publishes to the npm registry. Under the shared
+  name, a global npm update replaced an installed fork with upstream's build. The
+  `zitadel-mcp` binary name and the MCP server name `zitadel-mcp-server` are unchanged, so
+  MCP configs need no edit. Before installing the fork, remove an unscoped global install
+  with `npm uninstall -g zitadel-mcp-server`, because both packages provide the
+  `zitadel-mcp` binary.
+
 ## [2.0.0] - 2026-09-27
 
 First release since `1.0.2` (February 2026). It collects seven months of changes, several of

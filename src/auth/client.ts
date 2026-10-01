@@ -10,7 +10,7 @@
  *   The MCP server almost exclusively uses org-scoped Management API endpoints
  *   (/management/v1/*, /v2/*). The one deliberate exception is the SMTP tools
  *   (src/tools/smtp.ts), which configure the INSTANCE-level notification provider via the
- *   Admin API (/admin/v1/email/*) and therefore require an IAM-level manager grant on the
+ *   Admin API (/admin/v1/smtp/*) and therefore require an IAM-level manager grant on the
  *   service account; see that module's header and the README security section.
  * - Access tokens are cached in memory and never logged or returned to the MCP client
  * - All communication with Zitadel uses HTTPS (enforced by issuer URL validation)

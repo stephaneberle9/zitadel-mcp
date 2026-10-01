@@ -1,5 +1,5 @@
 {
-  "name": "zitadel-mcp-server",
+  "name": "@stephaneberle9/zitadel-mcp-server",
   "version": "2.0.0",
   "description": "MCP server for Zitadel identity management — manage users, projects, apps, roles, and service accounts",
   "type": "module",
