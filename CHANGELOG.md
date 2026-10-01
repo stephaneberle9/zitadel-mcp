@@ -11,25 +11,52 @@ Fork-only changes on top of upstream `2.0.0`; they are not part of
 
 ### Added
 
+- **Default secrets file `~/.secrets/zitadel/.env`** — when `DOTENV_CONFIG_PATH` is not set,
+  the server reads its variables from `~/.secrets/zitadel/.env` (upstream reads a `.env`
+  file outside the package only when `DOTENV_CONFIG_PATH` names one). A globally installed
+  or linked `zitadel-mcp` binary therefore starts from an MCP config that carries no `env`
+  block and no machine-specific path. Precedence is unchanged: variables already in the
+  process environment win, then this file, then the repo-root `.env`.
 - **SMTP / email-provider tools (Admin API, IAM-level):**
   - `zitadel_get_smtp_config` — list the instance SMTP notification providers (which one is
     active, its host and sender); secrets are never returned.
   - `zitadel_set_smtp_config` — configure the instance SMTP provider (e.g. switch ZITADEL
     from its built-in dev server to Brevo) and activate it. Idempotent: reuses a matching
     provider (by description, host or sender) via `PUT`, otherwise creates one via `POST`.
-    Uses the `SMTPPlainAuth` oneof (`plain: { password }`) and puts the port inside `host`.
-  - `zitadel_activate_smtp_config` — activate an existing provider by id.
-  - These target the modern `/admin/v1/email/*` endpoints (the `/admin/v1/smtp` family is
-    deprecated). **Deliberate exception to the Management-API-only design:** the notification
-    provider is an INSTANCE-level resource, so ZITADEL requires `iam.read` / `iam.write` — the
-    service account needs an IAM-level manager grant (`ORG_OWNER` alone returns 403). New
+    Sends a flat request body (no `plain` wrapper) and puts the port inside `host`.
+  - `zitadel_activate_smtp_config` — activate an existing provider by id. Idempotent: an
+    already-active provider counts as success.
+  - `zitadel_test_smtp_config` — send a real test e-mail through a provider (the active one
+    when no id is given) and report the relay's own rejection reason on failure. This is the
+    authoritative delivery check: an active provider with a wrong SMTP key still rejects
+    mail. It reuses the stored password, so no secret enters the conversation.
+  - These target the `/admin/v1/smtp/*` endpoints, which ZITADEL marks deprecated in favor of
+    `/admin/v1/email/*`. The choice is deliberate and time-bound: on a real ZITADEL Cloud
+    instance (2026-07-09) the newer family's test endpoint returned `501 not implemented`
+    and its list did not reflect updates, while the deprecated family worked end to end.
+  - **Deliberate exception to the Management-API-only design:** the notification provider is
+    an INSTANCE-level resource, so ZITADEL requires `iam.read` / `iam.write` — the service
+    account needs an IAM-level manager grant (`ORG_OWNER` alone returns 403). New
     `notifications` tool domain; SMTP secrets/PII added to debug-log redaction.
   - **Leak-safe credentials:** `zitadel_set_smtp_config` reads the relay creds
-    (`SMTP_HOST/PORT/USER/PASSWORD/FROM`) from a gitignored file via a non-secret `credsProfile`
-    arg — `~/.secrets/smtp/.env.<profile>` (default `~/.secrets/smtp/.env`, base overridable
-    with `SMTP_ENV_PATH`) — so the password never enters the conversation. Any field can still be
-    passed as an argument (which overrides the file), but passing `password` that way puts it in
-    the transcript. `SMTP_FROM` ("Name &lt;addr&gt;") is split into ZITADEL's sender name/address.
+    (`SMTP_HOST/PORT/USER/PASSWORD/FROM`) from a gitignored file, so the password never
+    enters the conversation. The file is `~/.secrets/<provider>/.env`, or
+    `~/.secrets/<provider>/.env.<profile>` when the non-secret `credsProfile` argument names
+    a profile. The provider folder is auto-discovered: the server uses the one folder whose
+    file defines `SMTP_HOST`, and asks for `credsDir` when several match. `SMTP_ENV_PATH`
+    overrides the location entirely. Any field can still be passed as an argument (which
+    overrides the file), but passing `password` that way puts it in the transcript.
+    `SMTP_FROM` ("Name &lt;addr&gt;") is split into ZITADEL's sender name/address.
+
+### Changed
+
+- **The npm package is named `@stephaneberle9/zitadel-mcp-server`** instead of
+  `zitadel-mcp-server`, the name upstream publishes to the npm registry. Under the shared
+  name, a global npm update replaced an installed fork with upstream's build. The
+  `zitadel-mcp` binary name and the MCP server name `zitadel-mcp-server` are unchanged, so
+  MCP configs need no edit. Before installing the fork, remove an unscoped global install
+  with `npm uninstall -g zitadel-mcp-server`, because both packages provide the
+  `zitadel-mcp` binary.
 
 ## [2.0.0] - 2026-09-27
 

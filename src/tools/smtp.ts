@@ -1,5 +1,5 @@
 /**
- * SMTP / email-provider tools (3 tools)
+ * SMTP / email-provider tools (4 tools)
  * Instance notification SMTP provider via the Zitadel Admin API v1.
  *
  * ⚠️ Scope note (deliberate exception to the server's least-privilege stance):
