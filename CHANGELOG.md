@@ -11,6 +11,15 @@ Fork-only changes on top of upstream `2.0.0`; they are not part of
 
 ### Added
 
+- **Notification message text tools** — customize the e-mails ZITADEL sends itself ("Verify
+  Email", "Initialize User", "Password Reset", …), which the login text tools do not reach:
+  - `zitadel_get_message_text` — read a message type for one language and show, per field,
+    whether this level overrides it or inherits it (`GET /{management|admin}/v1/text/message/{type}/{language}`).
+  - `zitadel_set_message_text` — override individual fields (`PUT` on the same path). The
+    endpoint replaces the whole row and drops every field sent empty, so the tool reads this
+    level's own overrides first and merges the requested fields in; inherited text is never
+    written back as an override, and `""` clears a single field.
+  - Both default to the configured org; `level: "instance"` uses the Admin API.
 - **Default secrets file `~/.secrets/zitadel/.env`** — when `DOTENV_CONFIG_PATH` is not set,
   the server reads its variables from `~/.secrets/zitadel/.env` (upstream reads a `.env`
   file outside the package only when `DOTENV_CONFIG_PATH` names one). A globally installed
