@@ -7,8 +7,11 @@
  * - OAuth scope is minimal: `openid urn:zitadel:iam:org:project:id:zitadel:aud` (REM-23)
  *   This scope grants access to Zitadel's Management API only. Actual permissions are
  *   determined by the service account's role (should be ORG_OWNER, NOT IAM_ADMIN).
- *   The MCP server only uses org-scoped Management API endpoints (/management/v1/*,
- *   /v2/*) — no Admin API endpoints (/admin/v1/*).
+ *   The MCP server almost exclusively uses org-scoped Management API endpoints
+ *   (/management/v1/*, /v2/*). The one deliberate exception is the SMTP tools
+ *   (src/tools/smtp.ts), which configure the INSTANCE-level notification provider via the
+ *   Admin API (/admin/v1/email/*) and therefore require an IAM-level manager grant on the
+ *   service account; see that module's header and the README security section.
  * - Access tokens are cached in memory and never logged or returned to the MCP client
  * - All communication with Zitadel uses HTTPS (enforced by issuer URL validation)
  *
@@ -181,8 +184,18 @@ export class ZitadelClient {
   /**
    * Make an authenticated request to the Zitadel Management API
    * Includes x-zitadel-orgid header, handles 401 cache clearing and empty responses
+   *
+   * `meta.exposeErrorDetail` opts a single call into surfacing ZITADEL's own error
+   * `message` on failure (appended to the generic text). Off by default so we don't leak
+   * API internals; enable it only where the upstream message is the useful, non-sensitive
+   * payload — e.g. the SMTP-test endpoint, whose failure reason describes the *relay*
+   * configuration ("could not add smtp auth…"), not ZITADEL internals.
    */
-  async request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  async request<T>(
+    path: string,
+    options: RequestInit = {},
+    meta: { exposeErrorDetail?: boolean } = {}
+  ): Promise<T> {
     const token = await this.getAccessToken();
     const url = `${this.config.issuer}${path}`;
 
@@ -198,12 +211,13 @@ export class ZitadelClient {
     if (!response.ok) {
       // Read the body as text, so a non-JSON error page is still loggable.
       const errorBody = await response.text();
+      const errorDetail = describeErrorBody(errorBody);
 
       // Log full error details internally
       logger.error('Zitadel API error', {
         status: response.status,
         path,
-        ...describeErrorBody(errorBody),
+        ...errorDetail,
       });
 
       // Clear token cache on auth failures
@@ -227,6 +241,10 @@ export class ZitadelClient {
         message = 'Rate limit exceeded. Please try again later.';
       } else {
         message = `Operation failed (HTTP ${status}). Check server logs for details.`;
+      }
+      // Opt-in: append the upstream reason where it is the point of the call (see doc above).
+      if (meta.exposeErrorDetail && errorDetail['message']) {
+        message += ` — ${errorDetail['message']}`;
       }
       const err = new Error(message) as Error & { status?: number };
       err.status = status;

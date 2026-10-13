@@ -18,6 +18,7 @@ import {
   LOGIN_POLICY_WRITE_HANDLERS,
 } from './login-policy.js';
 import { LOGIN_TEXTS_TOOLS, LOGIN_TEXTS_HANDLERS } from './login-texts.js';
+import { SMTP_TOOLS, SMTP_HANDLERS } from './smtp.js';
 import { UTILITY_TOOLS, UTILITY_HANDLERS } from './utility.js';
 import { PORTAL_TOOLS, PORTAL_HANDLERS } from './portal.js';
 import type { ToolDefinition, ToolHandler } from '../types/tools.js';
@@ -36,6 +37,7 @@ export function getTools(config: ZitadelConfig): ToolDefinition[] {
     ...PROVISIONING_TOOLS,
     ...LOGIN_POLICY_TOOLS,
     ...LOGIN_TEXTS_TOOLS,
+    ...SMTP_TOOLS,
     ...UTILITY_TOOLS,
   ];
 
@@ -62,6 +64,7 @@ export function getHandlers(config: ZitadelConfig): Record<string, ToolHandler> 
     ...PROVISIONING_HANDLERS,
     ...LOGIN_POLICY_HANDLERS,
     ...LOGIN_TEXTS_HANDLERS,
+    ...SMTP_HANDLERS,
     ...UTILITY_HANDLERS,
   };
 

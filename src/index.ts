@@ -62,6 +62,8 @@ async function main() {
     'roleKey', 'roleKeys',
     'accessTokenType',
     'expirationDate',
+    // SMTP provider secrets/PII (zitadel_set_smtp_config)
+    'password', 'host', 'user', 'senderAddress', 'replyToAddress',
   ]);
 
   function redactArgs(args: Record<string, unknown>): Record<string, unknown> {
