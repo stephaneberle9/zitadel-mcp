@@ -5,7 +5,7 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for [
 > *"Provision jane@example.com as an Admin."*
 > — One tool call: creates the user, assigns the `admin` project role (v2 authorization), and grants `ORG_USER_MANAGER` so she can manage other users — no Super Admin required.
 
-## Tools (47)
+## Tools (48)
 
 | Category | Tool | Description |
 |----------|------|-------------|
@@ -49,6 +49,7 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for [
 | | `zitadel_set_branding` | Set colors, theme mode and flags in the draft — merges onto the draft; an org still inheriting first gets its own policy, seeded from the inherited one |
 | | `zitadel_upload_branding_asset` | Upload a logo, icon (light or dark slot) or font from a file inside `ZITADEL_ASSETS_DIR` into the draft — PNG for logo and icon, max 512 KiB |
 | | `zitadel_activate_branding` | Activate the draft (the Console's "Apply settings") — nothing a branding tool writes is live before this |
+| **Instances** | `zitadel_list_instances` | List the ZITADEL instances this server can reach (default + every `.env.<name>` next to it) with issuer, org id and read-only flag — every other tool takes `instance` to run there |
 | **SMTP** *(Admin API, IAM-level)* | `zitadel_get_smtp_config` | List instance SMTP notification providers (active one, host, sender) — secrets never returned |
 | | `zitadel_set_smtp_config` | Configure the instance SMTP provider (e.g. Brevo) and activate it — idempotent; creds auto-discovered from `~/.secrets/<provider>/` |
 | | `zitadel_activate_smtp_config` | Activate an existing SMTP provider by id |
@@ -151,6 +152,22 @@ To keep secrets out of the MCP client config, omit the `env` block and put the v
   }
 }
 ```
+
+### Several instances
+
+One server reaches several ZITADEL instances — e.g. a preview and a live instance kept in step. The default instance is the one described above. Every other instance is a sibling of the configuration file `DOTENV_CONFIG_PATH` names, called `.env.<name>` (lowercase letters, digits and hyphens), holding the same `ZITADEL_*` variables for that instance's service account:
+
+```text
+/home/me/.config/zitadel-mcp/.env           # default instance (DOTENV_CONFIG_PATH)
+/home/me/.config/zitadel-mcp/.env.live      # named "live"
+/home/me/.config/zitadel-mcp/.env.preview   # named "preview"
+```
+
+Without a configuration file — every variable set in the MCP client's `env` block — only the default instance exists.
+
+Every tool takes an optional `instance` argument naming one; without it the call goes to the default instance. `zitadel_list_instances` shows what is reachable. Every result starts with a line naming the instance and host it ran against, so a transcript always shows where a write landed.
+
+`ZITADEL_READ_ONLY=true` in an instance file makes that instance read-only on its own — e.g. live, while preview stays writable; the process-wide setting still applies to all. `ZITADEL_ENABLE_LOGIN_POLICY_WRITE` and `LOG_LEVEL` stay process-wide. Instance files are read on first use; restart the server after editing one.
 
 ### Environment Variables
 

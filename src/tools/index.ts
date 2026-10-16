@@ -22,6 +22,7 @@ import { MESSAGE_TEXT_TOOLS, MESSAGE_TEXT_HANDLERS } from './message-texts.js';
 import { BRANDING_TOOLS, BRANDING_HANDLERS } from './branding.js';
 import { SMTP_TOOLS, SMTP_HANDLERS } from './smtp.js';
 import { UTILITY_TOOLS, UTILITY_HANDLERS } from './utility.js';
+import { INSTANCE_TOOLS, INSTANCE_HANDLERS } from './instances.js';
 import { PORTAL_TOOLS, PORTAL_HANDLERS } from './portal.js';
 import type { ToolDefinition, ToolHandler } from '../types/tools.js';
 import type { ZitadelConfig } from '../utils/config.js';
@@ -43,6 +44,7 @@ export function getTools(config: ZitadelConfig): ToolDefinition[] {
     ...BRANDING_TOOLS,
     ...SMTP_TOOLS,
     ...UTILITY_TOOLS,
+    ...INSTANCE_TOOLS,
   ];
 
   if (isLoginPolicyWriteEnabled(config)) {
@@ -72,6 +74,7 @@ export function getHandlers(config: ZitadelConfig): Record<string, ToolHandler> 
     ...BRANDING_HANDLERS,
     ...SMTP_HANDLERS,
     ...UTILITY_HANDLERS,
+    ...INSTANCE_HANDLERS,
   };
 
   if (isLoginPolicyWriteEnabled(config)) {

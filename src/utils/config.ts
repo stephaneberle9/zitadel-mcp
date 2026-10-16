@@ -30,18 +30,22 @@ const configSchema = z.object({
 
 export type ZitadelConfig = z.infer<typeof configSchema>;
 
-export function loadConfig(): ZitadelConfig {
+/**
+ * Build the configuration from a set of environment variables — the process environment for the
+ * default instance, or the parsed `.env.<name>` file of a named one (see utils/instances.ts).
+ */
+export function loadConfig(env: Record<string, string | undefined> = process.env): ZitadelConfig {
   const result = configSchema.safeParse({
-    issuer: process.env['ZITADEL_ISSUER'],
-    serviceAccountUserId: process.env['ZITADEL_SERVICE_ACCOUNT_USER_ID'],
-    serviceAccountKeyId: process.env['ZITADEL_SERVICE_ACCOUNT_KEY_ID'],
-    serviceAccountPrivateKey: process.env['ZITADEL_SERVICE_ACCOUNT_PRIVATE_KEY'],
-    orgId: process.env['ZITADEL_ORG_ID'],
-    projectId: process.env['ZITADEL_PROJECT_ID'] || undefined,
-    portalDatabaseUrl: process.env['PORTAL_DATABASE_URL'] || undefined,
-    readOnly: process.env['ZITADEL_READ_ONLY'] === 'true',
-    loginPolicyWriteEnabled: process.env['ZITADEL_ENABLE_LOGIN_POLICY_WRITE'] === 'true',
-    logLevel: process.env['LOG_LEVEL'] || 'INFO',
+    issuer: env['ZITADEL_ISSUER'],
+    serviceAccountUserId: env['ZITADEL_SERVICE_ACCOUNT_USER_ID'],
+    serviceAccountKeyId: env['ZITADEL_SERVICE_ACCOUNT_KEY_ID'],
+    serviceAccountPrivateKey: env['ZITADEL_SERVICE_ACCOUNT_PRIVATE_KEY'],
+    orgId: env['ZITADEL_ORG_ID'],
+    projectId: env['ZITADEL_PROJECT_ID'] || undefined,
+    portalDatabaseUrl: env['PORTAL_DATABASE_URL'] || undefined,
+    readOnly: env['ZITADEL_READ_ONLY'] === 'true',
+    loginPolicyWriteEnabled: env['ZITADEL_ENABLE_LOGIN_POLICY_WRITE'] === 'true',
+    logLevel: env['LOG_LEVEL'] || 'INFO',
   });
 
   if (!result.success) {
