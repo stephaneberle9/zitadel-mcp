@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import type { ZitadelClient } from '../auth/client.js';
 import type { ZitadelConfig } from '../utils/config.js';
+import type { InstanceRegistry } from '../utils/instances.js';
 
 export interface ToolAnnotations {
   title?: string;
@@ -31,6 +32,8 @@ export interface ToolDefinition {
 export interface HandlerContext {
   client: ZitadelClient;
   config: ZitadelConfig;
+  /** Every instance this session can reach — set by the dispatcher (see utils/instances.ts). */
+  instances?: InstanceRegistry;
 }
 
 export interface ToolResponse {

@@ -5,7 +5,7 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for [
 > *"Provision jane@example.com as an Admin."*
 > — One tool call: creates the user, assigns the `admin` project role (v2 authorization), and grants `ORG_USER_MANAGER` so she can manage other users — no Super Admin required.
 
-## Tools (37)
+## Tools (38)
 
 | Category | Tool | Description |
 |----------|------|-------------|
@@ -43,6 +43,7 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for [
 | | `zitadel_set_self_registration` | Enable/disable self-registration (`allowRegister`) for the org — idempotent. **Opt-in:** requires `ZITADEL_ENABLE_LOGIN_POLICY_WRITE=true` |
 | **Login Texts** *(Login V2)* | `zitadel_get_hosted_login_translation` | Read the new hosted-login (Login V2) text overrides for a locale — merged effective file, or `onlyOverrides` for this level's stored keys |
 | | `zitadel_set_hosted_login_translation` | Override Login V2 texts for a locale (Settings v2 API) — pass flat dot-path keys mirroring `apps/login/locales/<locale>.json`; merges onto shipped defaults, idempotent |
+| **Instances** | `zitadel_list_instances` | List the ZITADEL instances this server can reach (default + every `.env.<name>` next to it) with issuer, org id and read-only flag — every other tool takes `instance` to run there |
 | **Utility** | `zitadel_get_auth_config` | Get .env.local template for an app |
 | **Portal** | `portal_register_app` | Register app in portal DB |
 | | `portal_setup_full_app` | One-click: Zitadel + portal setup |
@@ -141,6 +142,22 @@ To keep secrets out of the MCP client config, omit the `env` block and put the v
   }
 }
 ```
+
+### Several instances
+
+One server reaches several ZITADEL instances — e.g. a preview and a live instance kept in step. The default instance is the one described above. Every other instance is a sibling of the configuration file `DOTENV_CONFIG_PATH` names, called `.env.<name>` (lowercase letters, digits and hyphens), holding the same `ZITADEL_*` variables for that instance's service account:
+
+```text
+/home/me/.config/zitadel-mcp/.env           # default instance (DOTENV_CONFIG_PATH)
+/home/me/.config/zitadel-mcp/.env.live      # named "live"
+/home/me/.config/zitadel-mcp/.env.preview   # named "preview"
+```
+
+Without a configuration file — every variable set in the MCP client's `env` block — only the default instance exists.
+
+Every tool takes an optional `instance` argument naming one; without it the call goes to the default instance. `zitadel_list_instances` shows what is reachable. Every result starts with a line naming the instance and host it ran against, so a transcript always shows where a write landed.
+
+`ZITADEL_READ_ONLY=true` in an instance file makes that instance read-only on its own — e.g. live, while preview stays writable; the process-wide setting still applies to all. `ZITADEL_ENABLE_LOGIN_POLICY_WRITE` and `LOG_LEVEL` stay process-wide. Instance files are read on first use; restart the server after editing one.
 
 ### Environment Variables
 

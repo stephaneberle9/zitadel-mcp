@@ -59,31 +59,40 @@ export const PORTAL_TOOLS: ToolDefinition[] = [
   },
 ];
 
-// ─── Singleton DB Connection ─────────────────────────────────────────────────
+// ─── DB Connections ──────────────────────────────────────────────────────────
 
-let portalSql: ReturnType<typeof postgres> | null = null;
+// One pool per portal database. A single pool for the process would be opened with whichever
+// URL came first and reused for every later call, so with several instances (utils/instances.ts)
+// whose files name different portal databases, an app registered on one instance would land
+// in another instance's portal.
+const portalPools = new Map<string, ReturnType<typeof postgres>>();
+let cleanupRegistered = false;
 
 function getPortalDb(ctx: { config: { portalDatabaseUrl?: string } }): ReturnType<typeof postgres> {
-  if (!ctx.config.portalDatabaseUrl) {
+  const url = ctx.config.portalDatabaseUrl;
+  if (!url) {
     throw new Error('PORTAL_DATABASE_URL is not configured');
   }
-  if (!portalSql) {
-    portalSql = postgres(ctx.config.portalDatabaseUrl, {
+  let pool = portalPools.get(url);
+  if (!pool) {
+    pool = postgres(url, {
       max: 3,              // Small pool — MCP servers are single-user
       idle_timeout: 60,    // Close idle connections after 60s
       connect_timeout: 10, // Fail fast on connection issues
     });
-    // Register cleanup on process exit
+    portalPools.set(url, pool);
+  }
+  if (!cleanupRegistered) {
+    // Register cleanup on process exit, once for every pool
     const cleanup = () => {
-      if (portalSql) {
-        portalSql.end({ timeout: 5 }).catch(() => {});
-        portalSql = null;
-      }
+      for (const open of portalPools.values()) open.end({ timeout: 5 }).catch(() => {});
+      portalPools.clear();
     };
     process.on('SIGINT', cleanup);
     process.on('SIGTERM', cleanup);
+    cleanupRegistered = true;
   }
-  return portalSql;
+  return pool;
 }
 
 // ─── Handlers ────────────────────────────────────────────────────────────────
