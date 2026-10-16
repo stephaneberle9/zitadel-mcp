@@ -5,7 +5,7 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for [
 > *"Provision jane@example.com as an Admin."*
 > — One tool call: creates the user, assigns the `admin` project role (v2 authorization), and grants `ORG_USER_MANAGER` so she can manage other users — no Super Admin required.
 
-## Tools (37)
+## Tools (41)
 
 | Category | Tool | Description |
 |----------|------|-------------|
@@ -43,6 +43,10 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for [
 | | `zitadel_set_self_registration` | Enable/disable self-registration (`allowRegister`) for the org — idempotent. **Opt-in:** requires `ZITADEL_ENABLE_LOGIN_POLICY_WRITE=true` |
 | **Login Texts** *(Login V2)* | `zitadel_get_hosted_login_translation` | Read the new hosted-login (Login V2) text overrides for a locale — merged effective file, or `onlyOverrides` for this level's stored keys |
 | | `zitadel_set_hosted_login_translation` | Override Login V2 texts for a locale (Settings v2 API) — pass flat dot-path keys mirroring `apps/login/locales/<locale>.json`; merges onto shipped defaults, idempotent |
+| **Branding** *(label policy)* | `zitadel_get_branding` | Read the active branding (colors, theme mode, logo/icon/font URLs) and whether the draft holds changes not yet activated; org level by default, `level: "instance"` for the instance default |
+| | `zitadel_set_branding` | Set colors, theme mode and flags in the draft — merges onto the draft; an org still inheriting first gets its own policy, seeded from the inherited one |
+| | `zitadel_upload_branding_asset` | Upload a logo, icon (light or dark slot) or font from a file inside `ZITADEL_ASSETS_DIR` into the draft — PNG for logo and icon, max 512 KiB |
+| | `zitadel_activate_branding` | Activate the draft (the Console's "Apply settings") — nothing a branding tool writes is live before this |
 | **Utility** | `zitadel_get_auth_config` | Get .env.local template for an app |
 | **Portal** | `portal_register_app` | Register app in portal DB |
 | | `portal_setup_full_app` | One-click: Zitadel + portal setup |
@@ -153,6 +157,7 @@ To keep secrets out of the MCP client config, omit the `env` block and put the v
 | `ZITADEL_ORG_ID` | Yes | Organization ID |
 | `ZITADEL_PROJECT_ID` | No | Default project ID for role operations |
 | `PORTAL_DATABASE_URL` | No | Postgres connection string (enables portal tools) |
+| `ZITADEL_ASSETS_DIR` | No | The one folder `zitadel_upload_branding_asset` may read from; unset, uploads are refused |
 | `ZITADEL_ENABLE_LOGIN_POLICY_WRITE` | No | Set `true` to expose `zitadel_set_self_registration` (default: off) |
 | `LOG_LEVEL` | No | `DEBUG`, `INFO`, `WARN`, `ERROR` (default: `INFO`) |
 | `DOTENV_CONFIG_PATH` | No | Path of a `.env` file to load the variables above from (read before the repo-root `.env`) |
@@ -161,6 +166,7 @@ To keep secrets out of the MCP client config, omit the `env` block and put the v
 
 **This server has admin-level access to your Zitadel instance.** Understand what that means before using it:
 
+- **Branding uploads read only from `ZITADEL_ASSETS_DIR`.** An uploaded asset is published at a public URL, so `zitadel_upload_branding_asset` reads only files inside that folder — checked on the path before any disk access (UNC and device paths are refused, since resolving one already opens a network connection), again after resolving symlinks, and on the file it actually opened — and only when the content's leading bytes match the declared image or font type. A missing file and one outside the folder get the same answer. Point it at the folder that holds the assets (e.g. a repo's `assets/`), not at a home directory. The trust boundary of every write tool remains the MCP client's approval of the call: a write tool publishes whatever it is given — texts as much as files.
 - The service account needs org-level management rights. Empirically (Zitadel Cloud, verified 2026-06): `ORG_USER_MANAGER` is enough to **create users and assign existing project roles**, but **`ORG_OWNER` is required** to create project roles, manage org-manager grants (the no-super-admin pattern), and manage applications. For the full provisioning workload, give the service account `ORG_OWNER`; human Admins can stay at `ORG_USER_MANAGER`. Keep the key in a gitignored `.env` (not a shared dotfile) and use `ZITADEL_READ_ONLY=true` for non-mutating sessions.
 - When you create an OIDC app (`zitadel_create_oidc_app`) as a confidential client, the **client secret is NOT returned** in the tool response (so it never enters the AI conversation). Retrieve it from the Zitadel Console: Project → Apps → Configuration → Regenerate Client Secret.
 - When you generate a service account key (`zitadel_create_service_user_key`), the private key is **written to `~/.zitadel-mcp/keys/` (file mode 600)** instead of being returned in the tool response — only the file path appears in the conversation.

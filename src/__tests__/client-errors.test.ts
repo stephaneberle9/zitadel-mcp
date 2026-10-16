@@ -112,3 +112,36 @@ describe('client error logging', () => {
     });
   });
 });
+
+describe('request content type', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  let client: ZitadelClient;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    client = new ZitadelClient(CONFIG);
+  });
+
+  const sentHeaders = (): Record<string, string> => fetchMock.mock.calls.at(-1)![1].headers;
+
+  it('sends JSON calls as application/json', async () => {
+    fetchMock.mockResolvedValueOnce(tokenGranted()).mockResolvedValueOnce(jsonResponse({}, 200));
+
+    await client.request('/management/v1/policies/label', { method: 'PUT', body: '{}' });
+
+    expect(sentHeaders()['Content-Type']).toBe('application/json');
+  });
+
+  it('leaves the content type of a multipart upload to fetch, which adds the boundary', async () => {
+    fetchMock.mockResolvedValueOnce(tokenGranted()).mockResolvedValueOnce(new Response('', { status: 200 }));
+    const form = new FormData();
+    form.append('file', new Blob(['png'], { type: 'image/png' }), 'logo.png');
+
+    await client.request('/assets/v1/org/policy/label/logo', { method: 'POST', body: form });
+
+    expect(sentHeaders()['Content-Type']).toBeUndefined();
+    expect(sentHeaders()['x-zitadel-orgid']).toBe(CONFIG.orgId);
+  });
+});

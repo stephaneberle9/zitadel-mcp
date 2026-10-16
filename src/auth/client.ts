@@ -186,9 +186,11 @@ export class ZitadelClient {
     const token = await this.getAccessToken();
     const url = `${this.config.issuer}${path}`;
 
+    // A FormData body (asset uploads) must leave Content-Type to fetch, which adds the
+    // multipart boundary; every other call sends JSON.
     const headers: Record<string, string> = {
       Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
+      ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
       'x-zitadel-orgid': this.config.orgId,
       ...(options.headers as Record<string, string> || {}),
     };
