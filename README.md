@@ -5,7 +5,7 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for [
 > *"Provision jane@example.com as an Admin."*
 > — One tool call: creates the user, assigns the `admin` project role (v2 authorization), and grants `ORG_USER_MANAGER` so she can manage other users — no Super Admin required.
 
-## Tools (43)
+## Tools (47)
 
 | Category | Tool | Description |
 |----------|------|-------------|
@@ -45,6 +45,10 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for [
 | | `zitadel_set_hosted_login_translation` | Override Login V2 texts for a locale (Settings v2 API) — pass flat dot-path keys mirroring `apps/login/locales/<locale>.json`; merges onto shipped defaults, idempotent |
 | **Message Texts** *(notifications)* | `zitadel_get_message_text` | Read a notification text ZITADEL sends (e.g. `verifyemail`) for a language — per field: override or inherited |
 | | `zitadel_set_message_text` | Override fields of a notification text (subject, greeting, text, button, …) — merges onto this level's overrides, `""` clears a field; org level by default, `level: "instance"` for the instance default |
+| **Branding** *(label policy)* | `zitadel_get_branding` | Read the active branding (colors, theme mode, logo/icon/font URLs) and whether the draft holds changes not yet activated; org level by default, `level: "instance"` for the instance default |
+| | `zitadel_set_branding` | Set colors, theme mode and flags in the draft — merges onto the draft; an org still inheriting first gets its own policy, seeded from the inherited one |
+| | `zitadel_upload_branding_asset` | Upload a logo, icon (light or dark slot) or font from a file inside `ZITADEL_ASSETS_DIR` into the draft — PNG for logo and icon, max 512 KiB |
+| | `zitadel_activate_branding` | Activate the draft (the Console's "Apply settings") — nothing a branding tool writes is live before this |
 | **SMTP** *(Admin API, IAM-level)* | `zitadel_get_smtp_config` | List instance SMTP notification providers (active one, host, sender) — secrets never returned |
 | | `zitadel_set_smtp_config` | Configure the instance SMTP provider (e.g. Brevo) and activate it — idempotent; creds auto-discovered from `~/.secrets/<provider>/` |
 | | `zitadel_activate_smtp_config` | Activate an existing SMTP provider by id |
@@ -159,6 +163,7 @@ To keep secrets out of the MCP client config, omit the `env` block and put the v
 | `ZITADEL_ORG_ID` | Yes | Organization ID |
 | `ZITADEL_PROJECT_ID` | No | Default project ID for role operations |
 | `PORTAL_DATABASE_URL` | No | Postgres connection string (enables portal tools) |
+| `ZITADEL_ASSETS_DIR` | No | The one folder `zitadel_upload_branding_asset` may read from; unset, uploads are refused |
 | `ZITADEL_ENABLE_LOGIN_POLICY_WRITE` | No | Set `true` to expose `zitadel_set_self_registration` (default: off) |
 | `LOG_LEVEL` | No | `DEBUG`, `INFO`, `WARN`, `ERROR` (default: `INFO`) |
 | `DOTENV_CONFIG_PATH` | No | Path of a `.env` file to load the variables above from (read before the repo-root `.env`) |
@@ -167,6 +172,7 @@ To keep secrets out of the MCP client config, omit the `env` block and put the v
 
 **This server has admin-level access to your Zitadel instance.** Understand what that means before using it:
 
+- **Branding uploads read only from `ZITADEL_ASSETS_DIR`.** An uploaded asset is published at a public URL, so `zitadel_upload_branding_asset` reads only files inside that folder — checked on the path before any disk access (UNC and device paths are refused, since resolving one already opens a network connection), again after resolving symlinks, and on the file it actually opened — and only when the content's leading bytes match the declared image or font type. A missing file and one outside the folder get the same answer. Point it at the folder that holds the assets (e.g. a repo's `assets/`), not at a home directory. The trust boundary of every write tool remains the MCP client's approval of the call: a write tool publishes whatever it is given — texts as much as files.
 - The service account needs org-level management rights. Empirically (Zitadel Cloud, verified 2026-06): `ORG_USER_MANAGER` is enough to **create users and assign existing project roles**, but **`ORG_OWNER` is required** to create project roles, manage org-manager grants (the no-super-admin pattern), and manage applications. For the full provisioning workload, give the service account `ORG_OWNER`; human Admins can stay at `ORG_USER_MANAGER`. Keep the key in a gitignored `.env` (not a shared dotfile) and use `ZITADEL_READ_ONLY=true` for non-mutating sessions.
 - **SMTP tools are the one deliberate exception to the Management-API-only design.** `zitadel_get_smtp_config` / `zitadel_set_smtp_config` / `zitadel_activate_smtp_config` / `zitadel_test_smtp_config` use the **Admin API** (`/admin/v1/smtp/*`) because the notification SMTP provider is an **instance-level** resource shared by every org. ZITADEL gates it behind `iam.read` / `iam.write`, so the service account needs an **IAM-level manager** grant (e.g. `IAM_OWNER`) — `ORG_OWNER` alone returns `403`. Only grant this if you actually use the SMTP tools.
 - **SMTP creds stay out of the conversation.** `zitadel_set_smtp_config` reads the relay creds from a gitignored file selected by a **non-secret `credsProfile`**, kept in a **per-provider folder** `~/.secrets/<provider>/.env[.<profile>]` (e.g. `~/.secrets/brevo/.env.accelerator`), holding `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASSWORD`/`SMTP_FROM`. The server **auto-discovers** the one `~/.secrets/*/` folder whose `.env[.<profile>]` defines `SMTP_*`; pass **`credsDir`** (e.g. `"brevo"`) to disambiguate when several providers are set up in parallel, or `SMTP_ENV_PATH` to override the base path entirely. So you call the tool with just a profile name and the password never lands in the transcript. Passing `password` (or any field) as an argument still works and overrides the file — but the `password` argument *does* end up in the transcript, so prefer `credsProfile`. The password is redacted from logs and never returned by the read tool.
