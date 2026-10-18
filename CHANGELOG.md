@@ -57,6 +57,25 @@ Fork-only changes on top of upstream `2.0.0`; they are not part of
     overrides the file), but passing `password` that way puts it in the transcript.
     `SMTP_FROM` ("Name &lt;addr&gt;") is split into ZITADEL's sender name/address.
 
+### Fixed
+
+- **`zitadel_create_user` and `zitadel_provision_user` no longer claim an invitation mail
+  ZITADEL never sent.** Both created the user with `email.isVerified: false` and nothing
+  else, which is the Console's "Setup authentication later for this User": ZITADEL mails
+  nothing. Yet both reported an invitation as sent. Both tools now take the options of the
+  Console's "Create a new user" form:
+  - `setupMode`: `"invite"` (default) creates the user, then asks ZITADEL to mail its invitation
+    (`POST /v2/users/{userId}/invite_code` with `sendCode`, as the Console does); `"later"`
+    mails nothing; `"password"` sets an initial password (`password`, plus
+    `passwordChangeRequired`, default `true`) and mails nothing. The password is never
+    echoed in a result or a log.
+  - `emailVerified` (default `false`): the Console's "Email Verified" checkbox.
+
+  The results report only what ZITADEL was asked to do ("invitation mail requested" or
+  "no mail sent"), never delivery. If the user is created but the invitation request fails,
+  the user is kept and its id is reported with the failure; `zitadel_provision_user` still
+  assigns the role and reports `invitation: "failed"`.
+
 ### Changed
 
 - **The npm package is named `@stephaneberle9/zitadel-mcp-server`** instead of
