@@ -62,6 +62,8 @@ async function main() {
     'roleKey', 'roleKeys',
     'accessTokenType',
     'expirationDate',
+    // Initial password of a new human user (setup "password")
+    'password',
   ]);
 
   function redactArgs(args: Record<string, unknown>): Record<string, unknown> {

@@ -154,7 +154,7 @@ describe('user handlers', () => {
       );
 
       expect(result.content[0]!.text).toContain('new-u1');
-      expect(result.content[0]!.text).toContain('invitation email');
+      expect(result.content[0]!.text).toContain('Invitation mail requested');
     });
 
     it('validates email format', async () => {

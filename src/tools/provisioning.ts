@@ -1,7 +1,8 @@
 /**
  * High-level user provisioning tools (2 tools) — the app-portal cascade-up.
  *
- *   zitadel_provision_user  — atomic, idempotent: create human user + assign the
+ *   zitadel_provision_user  — atomic, idempotent: create human user (and request its
+ *                             invitation mail, by default) + assign the
  *                             Admin|Standard project role (v2 authorization) +
  *                             (for Admins) grant ORG_USER_MANAGER. Returns
  *                             { zitadelUserId, role, authorizationId, ... }.
@@ -24,7 +25,15 @@ import {
   DEFAULT_ADMIN_MANAGER_ROLE,
   ORG_OWNER_ROLE,
 } from '../utils/rbac.js';
-import { findUserByEmail, createHumanUser } from './users.js';
+import {
+  findUserByEmail,
+  createHumanUser,
+  describeUserSetup,
+  refineUserSetup,
+  userSetupShape,
+  USER_SETUP_PROPERTIES,
+  type CreateHumanUserResult,
+} from './users.js';
 import {
   resolveProjectId,
   getProjectRoleKeys,
@@ -42,7 +51,7 @@ export const PROVISIONING_TOOLS: ToolDefinition[] = [
   {
     name: 'zitadel_provision_user',
     description:
-      'Atomically provision a user for the core SSO apps (the app-portal cascade-up). Creates the human user (idempotent by email or supplied userId), assigns the Admin|Standard project role via the v2 AuthorizationService, and — for Admins — grants ORG_USER_MANAGER so they can manage any user (no-super-admin pattern). Returns { zitadelUserId, role, authorizationId }. Safe to re-run.',
+      'Atomically provision a user for the core SSO apps (the app-portal cascade-up). Creates the human user (idempotent by email or supplied userId; `setupMode` as in zitadel_create_user, default "invite" asks ZITADEL to mail an invitation — an existing user is reused as is and mailed nothing), assigns the Admin|Standard project role via the v2 AuthorizationService, and — for Admins — grants ORG_USER_MANAGER so they can manage any user (no-super-admin pattern). Returns { zitadelUserId, role, authorizationId, invitation }. Safe to re-run.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -56,6 +65,7 @@ export const PROVISIONING_TOOLS: ToolDefinition[] = [
           description: 'Grant the org-manager role. Default: true for role=admin, false for role=standard. Set explicitly to override.',
         },
         projectId: { type: 'string', description: 'Project ID for the role assignment (uses default project if omitted)' },
+        ...USER_SETUP_PROPERTIES,
       },
       required: ['email', 'firstName', 'lastName', 'role'],
     },
@@ -117,7 +127,8 @@ const provisionUserHandler: ToolHandler = async (params, ctx) => {
     role: rbacProjectRoleSchema,
     userId: zitadelId('userId').optional(),
     grantOrgManager: z.boolean().optional(),
-  }).parse(params);
+    ...userSetupShape,
+  }).superRefine(refineUserSetup).parse(params);
   const projectId = resolveProjectId(params, ctx);
 
   // 1. The target project must actually define the requested role.
@@ -135,16 +146,15 @@ const provisionUserHandler: ToolHandler = async (params, ctx) => {
   if (!user) user = await findUserByEmail(ctx, input.email);
 
   let createdUser = false;
+  let created: CreateHumanUserResult | null = null;
   let zitadelUserId: string;
   if (user) {
     zitadelUserId = user.userId;
   } else {
-    zitadelUserId = await createHumanUser(ctx, {
-      email: input.email,
-      firstName: input.firstName,
-      lastName: input.lastName,
-      userId: input.userId,
-    });
+    // A failed invitation does not abort: the user exists, so the role assignment proceeds
+    // and the failure is reported below.
+    created = await createHumanUser(ctx, input);
+    zitadelUserId = created.userId;
     createdUser = true;
   }
 
@@ -190,7 +200,9 @@ const provisionUserHandler: ToolHandler = async (params, ctx) => {
     }
   }
 
-  logger.info('Provisioned user', { createdUser, createdAuthorization, role: input.role });
+  logger.info('Provisioned user', { createdUser, createdAuthorization, role: input.role, setupMode: input.setupMode });
+
+  const invitation = !created || input.setupMode !== 'invite' ? 'none' : created.inviteError ? 'failed' : 'requested';
 
   const out = {
     zitadelUserId,
@@ -200,15 +212,16 @@ const provisionUserHandler: ToolHandler = async (params, ctx) => {
     createdUser,
     createdAuthorization,
     managerChanged,
+    invitation,
   };
 
   const notes: string[] = [];
-  if (!createdUser) notes.push(`Reused existing user (${input.email}).`);
+  if (!createdUser) notes.push(`Reused existing user (${input.email}); its authentication setup was left unchanged and no mail was sent.`);
   if (!createdAuthorization) notes.push(`Role "${input.role}" was already assigned.`);
   if (otherRoles.length) notes.push(`⚠ User also holds other project role(s): ${otherRoles.join(', ')} (not removed).`);
   if (managerError) notes.push(`⚠ ${managerError}`);
   else if (wantManager && !managerChanged) notes.push(`Org-manager role already present.`);
-  if (createdUser) notes.push(`An invitation/MFA-enrollment email was sent to ${input.email}.`);
+  if (created) notes.push(describeUserSetup(input, created));
 
   return textResponse(
     `User provisioned.\n\n` +

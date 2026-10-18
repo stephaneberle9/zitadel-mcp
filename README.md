@@ -11,7 +11,7 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for [
 |----------|------|-------------|
 | **Users** | `zitadel_list_users` | List/search users |
 | | `zitadel_get_user` | Get user details |
-| | `zitadel_create_user` | Create user (sends invite email; optional client-supplied `userId`) |
+| | `zitadel_create_user` | Create user; `setupMode` as in the Console: `invite` (default, requests ZITADEL's invitation mail), `later` (no mail) or `password` (initial password, no mail); optional `emailVerified` and client-supplied `userId` |
 | | `zitadel_deactivate_user` | Deactivate user |
 | | `zitadel_reactivate_user` | Reactivate user |
 | | `zitadel_lock_user` | Lock user |
@@ -33,7 +33,7 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for [
 | | `zitadel_list_org_managers` | List who holds manager grants (filter by role) |
 | | `zitadel_grant_org_manager` | Grant manager role(s) (default `ORG_USER_MANAGER`); idempotent |
 | | `zitadel_revoke_org_manager` | Revoke manager role(s); guards the last `ORG_OWNER` |
-| **Provisioning** | `zitadel_provision_user` | Atomic + idempotent: create user + assign `admin`/`standard` + (for Admins) `ORG_USER_MANAGER` |
+| **Provisioning** | `zitadel_provision_user` | Atomic + idempotent: create user (same `setupMode` options, default `invite`) + assign `admin`/`standard` + (for Admins) `ORG_USER_MANAGER` |
 | | `zitadel_offboard_user` | Remove role + revoke manager + deactivate; guards last-Admin & self-demotion |
 | **Service Accounts** | `zitadel_create_service_user` | Create machine user |
 | | `zitadel_create_service_user_key` | Generate key pair |
