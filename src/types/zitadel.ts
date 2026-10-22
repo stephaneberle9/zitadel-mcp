@@ -85,6 +85,22 @@ export interface GetUserResponse {
   user: ZitadelUserDetails;
 }
 
+/** One entry of a user's history (Management API v1 ListUserChanges, zitadel.change.v1.Change). */
+export interface UserChange {
+  changeDate?: string;
+  /** `key` is "EventTypes." + the event type, e.g. "EventTypes.user.human.invite.code.added". */
+  eventType?: { key?: string; localizedMessage?: string };
+  sequence?: string;
+  editorId?: string;
+  editorDisplayName?: string;
+  editorPreferredLoginName?: string;
+  resourceOwnerId?: string;
+}
+
+export interface ListUserChangesResponse {
+  result?: UserChange[];
+}
+
 export interface CreateHumanUserRequest {
   profile: {
     givenName: string;

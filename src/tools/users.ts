@@ -1,12 +1,19 @@
 /**
- * User management tools (8 tools)
- * CRUD operations for human users via Zitadel v2 API
+ * User management tools (9 tools)
+ * CRUD operations for human users via Zitadel v2 API; the user's history via Management API v1
  */
 
 import { z } from 'zod';
 import type { ToolDefinition, ToolHandler, HandlerContext } from '../types/tools.js';
 import { textResponse, errorResponse, zitadelId } from '../types/tools.js';
-import type { ListUsersResponse, CreateUserResponse, ZitadelUserDetails, GetUserResponse } from '../types/zitadel.js';
+import type {
+  ListUsersResponse,
+  CreateUserResponse,
+  ZitadelUserDetails,
+  GetUserResponse,
+  ListUserChangesResponse,
+  UserChange,
+} from '../types/zitadel.js';
 import { logger } from '../utils/logger.js';
 
 // ─── Authentication setup ───────────────────────────────────────────────────
@@ -88,6 +95,21 @@ export const USER_TOOLS: ToolDefinition[] = [
     },
     _meta: { readOnly: true, domain: 'users' },
     annotations: { title: 'Get User', readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+  },
+  {
+    name: 'zitadel_get_user_history',
+    description: "Show a user's event history (the Console's History tab), oldest first: timestamp, ZITADEL event type, editor. Use it to diagnose failed invitations and e-mail verifications — when each code was issued or sent, and when each check failed or succeeded. Codes and other secrets are never shown.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        userId: { type: 'string', description: 'The Zitadel user ID' },
+        limit: { type: 'number', description: 'Maximum number of events, the most recent ones (default: 100, max: 1000)' },
+        since: { type: 'string', description: 'Only events at or after this time (ISO 8601, e.g. "2026-10-20" or "2026-10-20T08:00:00Z")' },
+      },
+      required: ['userId'],
+    },
+    _meta: { readOnly: true, domain: 'users' },
+    annotations: { title: 'Get User History', readOnlyHint: true, destructiveHint: false, idempotentHint: true },
   },
   {
     name: 'zitadel_create_user',
@@ -239,6 +261,95 @@ const getUserHandler: ToolHandler = async (params, ctx) => {
     `Created: ${u.details?.creationDate || 'N/A'}`,
   ];
 
+  return textResponse(lines.join('\n'));
+};
+
+/**
+ * Plain-language glosses for the event types that explain a failed invitation or verification.
+ * Keys are ZITADEL's event types (internal/repository/user); every other type is shown with
+ * ZITADEL's own localized message, if any.
+ */
+export const USER_EVENT_GLOSSES: Record<string, string> = {
+  'user.human.added': 'user created',
+  'user.human.selfregistered': 'user self-registered',
+  'user.human.invite.code.added': 'invite code issued; replaces any earlier invite code',
+  'user.human.invite.code.sent': 'invite mail handed to the mail provider',
+  'user.human.invite.check.succeeded': 'invite code accepted',
+  'user.human.invite.check.failed': 'invite code rejected (wrong, superseded, already used or expired)',
+  'user.human.initialization.code.added': 'initialization code issued; replaces any earlier one',
+  'user.human.initialization.code.sent': 'initialization mail handed to the mail provider',
+  'user.human.initialization.check.succeeded': 'initialization code accepted',
+  'user.human.initialization.check.failed': 'initialization code rejected (wrong, superseded, already used or expired)',
+  'user.human.email.changed': 'e-mail address changed',
+  'user.human.email.code.added': 'e-mail verification code issued; replaces any earlier one',
+  'user.human.email.code.sent': 'e-mail verification mail handed to the mail provider',
+  'user.human.email.verified': 'e-mail address verified',
+  'user.human.email.verification.failed': 'e-mail verification code rejected (wrong, superseded, already used or expired)',
+  'user.human.password.changed': 'password set',
+  'user.human.password.check.failed': 'wrong password at sign-in',
+  'user.locked': 'user locked',
+  'user.unlocked': 'user unlocked',
+  'user.deactivated': 'user deactivated',
+  'user.reactivated': 'user reactivated',
+};
+
+/** ISO 8601 in UTC; an unparsable timestamp is shown as ZITADEL sent it. */
+function isoUtc(timestamp: string | undefined): string {
+  if (!timestamp) return 'unknown time';
+  const ms = Date.parse(timestamp);
+  return Number.isNaN(ms) ? timestamp : new Date(ms).toISOString();
+}
+
+/**
+ * One line per event. Built from an allow-list of fields only: whatever else the API returns
+ * (encrypted codes, payloads) never reaches the output.
+ */
+export function formatUserChange(change: UserChange, userId: string): string {
+  const type = (change.eventType?.key || 'unknown').replace(/^EventTypes\./, '');
+  const gloss = USER_EVENT_GLOSSES[type] || change.eventType?.localizedMessage;
+  const editorName = change.editorDisplayName || change.editorPreferredLoginName || change.editorId;
+  const editor = !editorName
+    ? 'system'
+    : change.editorId === userId
+      ? `${editorName} (the user)`
+      : editorName;
+  return `${isoUtc(change.changeDate)}  ${type}${gloss ? ` — ${gloss}` : ''}  [by ${editor}]`;
+}
+
+const getUserHistoryHandler: ToolHandler = async (params, ctx) => {
+  const input = z.object({
+    userId: zitadelId('userId'),
+    limit: z.number().int().min(1).max(1000).default(100),
+    since: z.string().max(40).refine((s) => !Number.isNaN(Date.parse(s)), 'since must be an ISO 8601 date or timestamp').optional(),
+  }).parse(params);
+
+  // ListUserChanges is what the Console's History tab calls; it needs only user.read (an Org
+  // Owner grant suffices), unlike the Admin API's ListEvents. It has no date filter, so the
+  // newest `limit` events are fetched and `since` is applied here.
+  const response = await ctx.client.request<ListUserChangesResponse>(
+    `/management/v1/users/${input.userId}/changes/_search`,
+    { method: 'POST', body: JSON.stringify({ query: { limit: input.limit, asc: false } }) },
+  );
+  const fetched = response.result || [];
+  const sinceMs = input.since ? Date.parse(input.since) : undefined;
+  const events = fetched
+    .filter((c) => sinceMs === undefined || Date.parse(c.changeDate || '') >= sinceMs)
+    .reverse();
+
+  const scope = input.since ? ` since ${new Date(sinceMs!).toISOString()}` : '';
+  if (events.length === 0) {
+    return textResponse(`No events found for user ${input.userId}${scope}.`);
+  }
+
+  const lines = [
+    `History of user ${input.userId}${scope}: ${events.length} event(s), oldest first (times in UTC).`,
+    '',
+    ...events.map((c) => formatUserChange(c, input.userId)),
+  ];
+  // Every fetched event within `since` means older ones may have been cut off by `limit`.
+  if (fetched.length === input.limit && events.length === fetched.length) {
+    lines.push('', `Limit reached: these are the ${input.limit} most recent events; older ones may exist (raise \`limit\`).`);
+  }
   return textResponse(lines.join('\n'));
 };
 
@@ -441,6 +552,7 @@ const deleteUserHandler: ToolHandler = async (params, ctx) => {
 export const USER_HANDLERS: Record<string, ToolHandler> = {
   zitadel_list_users: listUsersHandler,
   zitadel_get_user: getUserHandler,
+  zitadel_get_user_history: getUserHistoryHandler,
   zitadel_create_user: createUserHandler,
   zitadel_deactivate_user: deactivateUserHandler,
   zitadel_reactivate_user: reactivateUserHandler,

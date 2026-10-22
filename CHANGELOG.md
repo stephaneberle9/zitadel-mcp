@@ -11,6 +11,17 @@ Fork-only changes on top of upstream `2.0.0`; they are not part of
 
 ### Added
 
+- **`zitadel_get_user_history`** — a user's event history, as the Console shows it under the
+  user's History: one line per event, oldest first, with the UTC timestamp, ZITADEL's event
+  type, a plain-language gloss for the invitation, e-mail verification, password and
+  lock/deactivation events, and the editor (the user, another user, a service user or the
+  system). It answers why an invitation or verification failed — whether the code was
+  superseded by a newer one, already used, or rejected — without opening the Console. Reads
+  `POST /management/v1/users/{userId}/changes/_search` (`ListUserChanges`, permission
+  `user.read`, so an Org Owner grant suffices; the Admin API's `ListEvents` would need an
+  instance-level grant, and the v2 APIs have no equivalent). `limit` (default 100) takes the
+  most recent events; `since` filters by time. Codes and other secrets are never shown: the
+  output is built from an allow-list of fields.
 - **Notification message text tools** — customize the e-mails ZITADEL sends itself ("Verify
   Email", "Initialize User", "Password Reset", …), which the login text tools do not reach:
   - `zitadel_get_message_text` — read a message type for one language and show, per field,
