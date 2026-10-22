@@ -4,6 +4,22 @@ All notable changes to `zitadel-mcp-server` are documented here. Format loosely 
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`zitadel_get_user_history`** — a user's event history, as the Console shows it under the
+  user's History: one line per event, oldest first, with the UTC timestamp, ZITADEL's event
+  type, a plain-language gloss for the invitation, e-mail verification, password and
+  lock/deactivation events, and the editor (the user, another user, a service user or the
+  system). It answers why an invitation or verification failed — whether the code was
+  superseded by a newer one, already used, or rejected — without opening the Console. Reads
+  `POST /management/v1/users/{userId}/changes/_search` (`ListUserChanges`, permission
+  `user.read`, so an Org Owner grant suffices; the Admin API's `ListEvents` would need an
+  instance-level grant, and the v2 APIs have no equivalent). `limit` (default 100) takes the
+  most recent events; `since` filters by time. Codes and other secrets are never shown: the
+  output is built from an allow-list of fields.
+
 ## [2.0.0] - 2026-09-27
 
 First release since `1.0.2` (February 2026). It collects seven months of changes, several of

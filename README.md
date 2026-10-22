@@ -5,12 +5,13 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for [
 > *"Provision jane@example.com as an Admin."*
 > — One tool call: creates the user, assigns the `admin` project role (v2 authorization), and grants `ORG_USER_MANAGER` so she can manage other users — no Super Admin required.
 
-## Tools (37)
+## Tools (38)
 
 | Category | Tool | Description |
 |----------|------|-------------|
 | **Users** | `zitadel_list_users` | List/search users |
 | | `zitadel_get_user` | Get user details |
+| | `zitadel_get_user_history` | A user's event history (the Console's History tab), oldest first — when invite and e-mail codes were issued, sent, accepted or rejected; optional `limit` (most recent N) and `since`; codes and secrets never shown |
 | | `zitadel_create_user` | Create user (sends invite email; optional client-supplied `userId`) |
 | | `zitadel_deactivate_user` | Deactivate user |
 | | `zitadel_reactivate_user` | Reactivate user |
